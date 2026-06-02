@@ -14,6 +14,11 @@ agent:
   # (0 disables; upstream default is $3/task.)
   cost_limit: 0
 
+environment:
+  # `docker run` pulls the (1-3GB) instance image inline on first use; the
+  # upstream default of 120s is far too short for an uncached pull.
+  pull_timeout: 1800
+
 model:
   model_kwargs:
     temperature: 0.0
