@@ -1,0 +1,21 @@
+# Overrides merged on top of mini-swe-agent's builtin benchmarks/swebench.yaml.
+# Passed as:  -c swebench.yaml -c model.yaml  (later configs win on conflicts)
+#
+# Pricing for subconscious/tim-qwen3.6-27b lives in litellm_registry.json
+# ($0.50/1M input, $0.05/1M cached input, $3.50/1M output); the run scripts
+# point litellm at it via LITELLM_MODEL_REGISTRY_PATH so per-task and global
+# cost tracking work.
+
+agent:
+  # Max agent iterations (LLM turns) per task. 250 is the official default used
+  # for leaderboard runs; most solved instances finish in well under 100 steps.
+  step_limit: 250
+  # No per-task $ ceiling — step_limit is the only stopping condition.
+  # (0 disables; upstream default is $3/task.)
+  cost_limit: 0
+
+model:
+  model_kwargs:
+    temperature: 0.0
+    drop_params: true          # silently drop params your server doesn't support
+    parallel_tool_calls: true  # set false if your server rejects this param
