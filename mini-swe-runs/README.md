@@ -58,8 +58,16 @@ again and it continues where it left off.
 
 ## Disk usage / image pruning
 
-Each instance pulls its own `x86_64` Docker image; a full Verified run accumulates a few
-hundred GB if all 500 are kept (containers self-clean — only images pile up).
+Each instance pulls its own `x86_64` Docker image (~1.1GB compressed each, but layers
+are heavily shared — the full 500-instance set is ~50-80GB of download and ~120GB on
+disk). Containers self-clean; only images pile up.
+
+On a slow connection, front-load the downloads before kicking off a run:
+
+```bash
+./prepull.sh        # pre-pull all 500 images (resumable; e.g. run overnight)
+./prepull.sh 25     # or just the first 25 (matches --slice '0:25')
+```
 
 **Default path: do nothing during the run.** Evaluation is the last consumer of each
 image, and `./evaluate.sh` passes `--clean True` to the harness, which deletes each
