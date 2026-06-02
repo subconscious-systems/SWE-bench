@@ -17,8 +17,11 @@ export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 OUTPUT_DIR="${OUTPUT_DIR:-results/smoke}"
 
 # Smoke runs are scratch — start with a clean slate so stale entries from
-# earlier crashed attempts don't pollute the scorecard.
+# earlier attempts don't pollute the scorecard. This includes the eval ledger:
+# the harness skips instances with an existing grading report for the same
+# run_id, which would silently report the PREVIOUS patch's verdict.
 rm -f "$OUTPUT_DIR/preds.json"
+rm -rf "$OUTPUT_DIR/logs/run_evaluation"
 
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
