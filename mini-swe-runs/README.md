@@ -136,6 +136,16 @@ Alternative without local Docker: [sb-cli](https://github.com/SWE-bench/sb-cli)
 evaluates in the cloud — `sb-cli submit swe-bench_verified test --predictions_path
 results/verified-full/preds.json --run_id verified-full`.
 
+## Timing report
+
+```bash
+./timings.sh results/verified-full
+```
+
+Read-only, run anytime (mid-run included): per-trace agent wall time (parsed from the
+timestamped `minisweagent.log`), whole-job wall time, and per-instance eval test
+runtimes once evaluation has run.
+
 ## Debugging a bad instance
 
 Every step the agent took is in
