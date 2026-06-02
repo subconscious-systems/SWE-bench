@@ -23,10 +23,15 @@ WORKERS="${WORKERS:-4}"
 # the predictions instead of polluting the repo root.
 (
   cd "$RESULTS_DIR"
+  # --clean True: evaluation is the last consumer of each instance image, so
+  # the harness deletes each one right after grading it (cache_level defaults
+  # to "env", which keeps the shared base/env layers for future runs).
+  # Set CLEAN=False to keep all images, e.g. when re-running evals repeatedly.
   uv run --no-project --with swebench python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Verified --split test \
     --predictions_path preds.json \
     --max_workers "$WORKERS" \
+    --clean "${CLEAN:-True}" \
     --run_id "$RUN_ID"
 )
 
