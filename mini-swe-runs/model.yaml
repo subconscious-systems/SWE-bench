@@ -24,3 +24,12 @@ model:
     temperature: 0.0
     drop_params: true          # silently drop params your server doesn't support
     parallel_tool_calls: true  # set false if your server rejects this param
+    # Per-request timeout (litellm-level, not sent to the server). Without it a
+    # hung request blocks its worker forever; with it the request raises
+    # litellm.Timeout and mini's built-in retry (10 attempts, exp backoff)
+    # resends. Keep well above tail latency to avoid retry storms.
+    timeout: 300
+    # Cap generation per turn. Normal turns are a few hundred tokens; runaway
+    # generations self-terminate in ~2 min at this cap and surface as a parse error the
+    # agent recovers from. No benchmark rule constrains this.
+    max_tokens: 8192
