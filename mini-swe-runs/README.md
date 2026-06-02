@@ -79,18 +79,32 @@ If the endpoint ever rejects requests due to tool-call params, set
 `parallel_tool_calls: false` in `model.yaml`; if the model lacks tool-calling entirely,
 swap `-c swebench.yaml` for `-c swebench_backticks.yaml` in the scripts.
 
-## Evaluating results
-
-`preds.json` is directly accepted by the SWE-bench harness in this repo:
+## Scoring the run
 
 ```bash
-uv run --with swebench python -m swebench.harness.run_evaluation \
-  --dataset_name princeton-nlp/SWE-bench_Verified --split test \
-  --predictions_path results/verified-full/preds.json \
-  --max_workers 4 --run_id verified-full
+./evaluate.sh                  # scores results/verified-full
+./evaluate.sh results/smoke    # scores the smoke run
 ```
 
-This prints resolve counts and writes a `*.json` report with per-instance pass/fail.
+This runs the official SWE-bench evaluation harness (needs Docker — it replays each
+patch in its instance container and runs the tests), then prints a copy-pasteable
+markdown scorecard:
+
+```
+| Metric | Value |
+|---|---|
+| **Score (resolved / benchmark)** | **N/500 (XX.X%)** |
+| ...
+```
+
+The "Score" line is the leaderboard-comparable number (% Resolved). The full report
+json (with `resolved_ids`, `unresolved_ids`, etc. for digging into specific instances)
+is written next to `preds.json`. Works on partial runs too — it only evaluates
+what's in `preds.json` and shows a separate resolved/submitted line.
+
+Alternative without local Docker: [sb-cli](https://github.com/SWE-bench/sb-cli)
+evaluates in the cloud — `sb-cli submit swe-bench_verified test --predictions_path
+results/verified-full/preds.json --run_id verified-full`.
 
 ## Debugging a bad instance
 
