@@ -10,9 +10,16 @@ agent:
   # Max agent iterations (LLM turns) per task. 250 is the official default used
   # for leaderboard runs; most solved instances finish in well under 100 steps.
   step_limit: 250
-  # No per-task $ ceiling — step_limit is the only stopping condition.
+  # No per-task $ ceiling — step_limit + wall clock are the stopping conditions.
   # (0 disables; upstream default is $3/task.)
   cost_limit: 0
+  # Hard per-task wall clock: 40 min = step_limit (250) x ~10s per normal
+  # inference loop. Normal instances finish in 3-8 min; this exists so a token
+  # death-spiral (consecutive max_tokens runaways at ~2 min each) forfeits the
+  # instance instead of grinding 250 steps (~9h) against the endpoint. Agent
+  # exits with TimeExceeded + empty patch and the run moves on. Keep well
+  # under the 2h container lifetime.
+  wall_time_limit_seconds: 2400
 
 environment:
   # `docker run` pulls the (1-3GB) instance image inline on first use; the

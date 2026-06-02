@@ -7,6 +7,9 @@
 #   ./repro_runaway.sh                                  # default: astropy__astropy-14096
 #   ./repro_runaway.sh astropy__astropy-14182           # any instance id
 #   MAX_TOKENS=0 ./repro_runaway.sh                     # 0 = drop the cap (reproduce the full runaway)
+#   TRACE=0 ./repro_runaway.sh                          # disable the request/response trace capture
+#
+# Traces land in traces/trace-<ts>.jsonl (one line per API call, live).
 #
 # Watch it live:  tail -f results/repro/<instance_id>/... appears as steps complete;
 # the conversation is saved to results/repro/<instance_id>/<instance_id>.traj.json
@@ -22,6 +25,22 @@ MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
 
 INSTANCE="${1:-astropy__astropy-14096}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/repro}"
+
+# Tracing (default ON; TRACE=0 disables): route the agent through a local
+# logging proxy that captures every request/response body live to
+# traces/trace-<ts>.jsonl — shareable while the run is still going; each line
+# is replayable with curl. Auth headers are forwarded but never written to
+# the trace. The proxy outlives the client timeout (1800s upstream), so even
+# runaway responses the agent never saw get captured.
+if [[ "${TRACE:-1}" == "1" ]]; then
+  TRACE_PORT="${TRACE_PORT:-8788}"
+  python3 trace_proxy.py --port "$TRACE_PORT" --upstream "${API_BASE%/v1}" &
+  TRACE_PID=$!
+  trap 'kill "$TRACE_PID" 2>/dev/null' EXIT
+  sleep 1
+  API_BASE="http://127.0.0.1:$TRACE_PORT/v1"
+  echo ">>> tracing enabled: tail -f traces/trace-*.jsonl"
+fi
 
 # MAX_TOKENS=0 removes the cap so the raw runaway behavior is observable
 # (request will then only die at the litellm timeout in model.yaml).
