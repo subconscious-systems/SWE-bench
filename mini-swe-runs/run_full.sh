@@ -28,8 +28,14 @@ export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 
 OUTPUT_DIR="${OUTPUT_DIR:-results/verified-full}"
 
-# Parallelism for both the agent run and the evaluation harness.
-export WORKERS="${WORKERS:-4}"
+# Agent parallelism = concurrent requests against the API (each worker has at
+# most one request in flight). Keep at 4 to stay within the endpoint's
+# concurrency limits — raise deliberately, not for speed.
+AGENT_WORKERS="${AGENT_WORKERS:-4}"
+
+# Eval parallelism is local-only (test containers, no API traffic) — safe to
+# raise independently on a beefy box. Consumed by evaluate.sh as WORKERS.
+export WORKERS="${EVAL_WORKERS:-4}"
 
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
@@ -38,7 +44,7 @@ MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
 uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
   --subset verified \
   --split test \
-  --workers "$WORKERS" \
+  --workers "$AGENT_WORKERS" \
   --output "$OUTPUT_DIR" \
   --model "$MODEL" \
   -c swebench.yaml \

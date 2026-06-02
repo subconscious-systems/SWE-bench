@@ -88,7 +88,9 @@ so it's safe to run even while a run is in progress.)
 | Model, base URL, API key | env vars / `.env` (defaults baked into scripts) |
 | Iterations per task (`step_limit: 250`), cost limit (disabled) | `model.yaml` |
 | Token pricing ($0.50/M in, $0.05/M cached in, $3.50/M out) | `litellm_registry.json` |
-| Parallelism, dataset, output dir | flags in the scripts (`--workers`, `--subset`, `-o`) |
+| Agent parallelism = concurrent API requests (default 4) | `AGENT_WORKERS` env var |
+| Eval parallelism, local-only, no API traffic (default 4) | `EVAL_WORKERS` env var |
+| Dataset, output dir | flags in the scripts (`--subset`, `-o`) |
 | mini-swe-agent version (pinned: 2.3.0) | `MSWEA_VERSION` env var |
 
 Handy one-off overrides (append to the `mini-extra` command):
