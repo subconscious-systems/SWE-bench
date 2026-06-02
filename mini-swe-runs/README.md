@@ -69,15 +69,17 @@ On a slow connection, front-load the downloads before kicking off a run:
 ./prepull.sh 25     # or just the first 25 (matches --slice '0:25')
 ```
 
-**Default path: do nothing during the run.** Evaluation is the last consumer of each
-image, and `./evaluate.sh` passes `--clean True` to the harness, which deletes each
-instance image right after grading it (shared base/env layers are kept). So images
-clean themselves up at eval time with zero re-pulls. Pass `CLEAN=False ./evaluate.sh ...`
-to keep them instead (e.g. if you'll re-run evals).
+**Default: images are kept across runs.** Nothing deletes an image unless you ask —
+prepull once, then run the agent and evaluation as many times as you like with zero
+re-downloads. When you're done with the box for good, reclaim disk with either:
 
-The catch: peak disk happens *during the agent run*, before evaluation. If the box can't
-hold the full image set (~300GB), use the mid-run reaper — and accept that evaluation
-will re-pull what it needs:
+```bash
+CLEAN=True ./evaluate.sh results/verified-full   # cleanup during a final eval, or
+./prune_images.sh results/verified-full           # standalone sweep, no eval re-run
+```
+
+If the box can't hold the full image set (~120GB), use the mid-run reaper — and accept
+that each repeat run/eval re-pulls what it needs:
 
 ```bash
 PRUNE_EVERY=600 ./run_full.sh   # every 10 min, delete images of completed instances
