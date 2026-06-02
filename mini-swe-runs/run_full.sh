@@ -35,7 +35,7 @@ AGENT_WORKERS="${AGENT_WORKERS:-4}"
 
 # Eval parallelism is local-only (test containers, no API traffic) — safe to
 # raise independently on a beefy box. Consumed by evaluate.sh as WORKERS.
-export WORKERS="${EVAL_WORKERS:-4}"
+export WORKERS="${EVAL_WORKERS:-8}"
 
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
