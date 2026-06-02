@@ -19,6 +19,17 @@ WORKERS="${WORKERS:-4}"
 
 [[ -f "$RESULTS_DIR/preds.json" ]] || { echo "error: no preds.json in $RESULTS_DIR" >&2; exit 1; }
 
+# Serialize concurrent invocations (e.g. the EVAL_EVERY watcher vs the final
+# pass): grading is incremental per run_id, so back-to-back runs are safe,
+# but two harnesses grading the same instance simultaneously are not.
+# (mkdir is the portable atomic lock; stale after a hard kill -> rmdir it.)
+LOCK="$RESULTS_DIR/.eval.lock"
+until mkdir "$LOCK" 2>/dev/null; do
+  echo "another evaluation is running ($LOCK exists), waiting..."
+  sleep 10
+done
+trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+
 # Run from inside the results dir so the report json and logs/ land next to
 # the predictions instead of polluting the repo root.
 (

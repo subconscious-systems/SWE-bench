@@ -117,8 +117,12 @@ swap `-c swebench.yaml` for `-c swebench_backticks.yaml` in the scripts.
 ## Scoring the run
 
 **Evaluation runs automatically** at the end of `run_full.sh` and `run_smoke.sh`
-(disable with `AUTO_EVAL=0`). To score manually — e.g. mid-run on partial results,
-or to re-print a scorecard:
+(disable with `AUTO_EVAL=0`). The post-run eval pass takes roughly 3-6h for the full
+500 at 4 workers. If the box has plenty of headroom you can overlap grading with the
+agent run (`EVAL_EVERY=900 ./run_full.sh` grades new results every 15 min — but on a
+constrained machine eval containers compete with agent containers and can hurt the
+score, so serial is the default). To score manually — e.g. mid-run on partial
+results, or to re-print a scorecard:
 
 ```bash
 ./evaluate.sh                  # scores results/verified-full

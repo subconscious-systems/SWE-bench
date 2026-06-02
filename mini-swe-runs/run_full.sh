@@ -29,9 +29,41 @@ MODEL="${MODEL:-openai/subconscious/tim-qwen3.6-27b}"
 export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 
 OUTPUT_DIR="${OUTPUT_DIR:-results/verified-full}"
+mkdir -p "$OUTPUT_DIR"
+
+# Shared by the agent run (--workers) and the evaluation harness
+# (--max_workers). Note both phases overlap when EVAL_EVERY > 0, so peak
+# load is up to 2x this many containers.
+export WORKERS="${WORKERS:-4}"
 
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
+
+# One trap cleans up all background loops on any exit (incl. Ctrl+C).
+BG_PIDS=()
+cleanup() { for pid in "${BG_PIDS[@]:-}"; do kill "$pid" 2>/dev/null || true; done; }
+trap cleanup EXIT
+
+# OPT-IN evaluate-as-you-go: EVAL_EVERY=900 ./run_full.sh grades whatever new
+# instances have landed in preds.json every 900s (the harness is incremental
+# per run_id — graded instances are skipped; concurrent invocations serialize
+# on a lock). Saves the post-run eval wait (~3-6h) but doubles container load,
+# and on a resource-constrained box eval containers can starve agent
+# containers (60s command timeout) and hurt the score — leave off unless the
+# machine has headroom. Default 0 = evaluate serially after the run.
+# Don't combine with PRUNE_EVERY — pruning deletes images the evaluator needs.
+EVAL_EVERY="${EVAL_EVERY:-0}"
+EVAL_LOOP_PID=""
+if (( EVAL_EVERY > 0 )); then
+  (
+    while sleep "$EVAL_EVERY"; do
+      ./evaluate.sh "$OUTPUT_DIR" >> "$OUTPUT_DIR/eval_during_run.log" 2>&1 || true
+    done
+  ) &
+  EVAL_LOOP_PID=$!
+  BG_PIDS+=("$EVAL_LOOP_PID")
+  echo "parallel evaluation enabled: grading new results every ${EVAL_EVERY}s (log: $OUTPUT_DIR/eval_during_run.log)"
+fi
 
 # Optional disk reaper: PRUNE_EVERY=600 ./run_full.sh removes the Docker image
 # of each completed instance every 600s (only instances already in preds.json
@@ -44,15 +76,14 @@ if (( PRUNE_EVERY > 0 )); then
       ./prune_images.sh "$OUTPUT_DIR" || true
     done
   ) &
-  PRUNE_PID=$!
-  trap 'kill "$PRUNE_PID" 2>/dev/null || true' EXIT
+  BG_PIDS+=("$!")
   echo "image reaper enabled: pruning completed-instance images every ${PRUNE_EVERY}s"
 fi
 
 uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
   --subset verified \
   --split test \
-  --workers 4 \
+  --workers "$WORKERS" \
   --output "$OUTPUT_DIR" \
   --model "$MODEL" \
   -c swebench.yaml \
@@ -61,6 +92,10 @@ uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
 
 echo
 echo "Done. Predictions: $OUTPUT_DIR/preds.json  (trajectories in $OUTPUT_DIR/<instance_id>/)"
+
+# Stop spawning new watcher cycles; an in-flight one finishes and the final
+# pass below waits on the eval lock, then grades only the remaining tail.
+[[ -n "$EVAL_LOOP_PID" ]] && kill "$EVAL_LOOP_PID" 2>/dev/null || true
 
 # Auto-score the run unless disabled with AUTO_EVAL=0.
 if [[ "${AUTO_EVAL:-1}" == "1" ]]; then
