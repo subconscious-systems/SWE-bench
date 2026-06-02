@@ -78,19 +78,8 @@ CLEAN=True ./evaluate.sh results/verified-full   # cleanup during a final eval, 
 ./prune_images.sh results/verified-full           # standalone sweep, no eval re-run
 ```
 
-If the box can't hold the full image set (~120GB), use the mid-run reaper — and accept
-that each repeat run/eval re-pulls what it needs:
-
-```bash
-PRUNE_EVERY=600 ./run_full.sh   # every 10 min, delete images of completed instances
-```
-
-It only removes images for instances already recorded in `preds.json`, so it never races
-the in-flight workers. You can also sweep manually anytime (during or after a run):
-
-```bash
-./prune_images.sh results/verified-full
-```
+(`prune_images.sh` only removes images for instances already recorded in `preds.json`,
+so it's safe to run even while a run is in progress.)
 
 ## Configuration
 
@@ -116,13 +105,11 @@ swap `-c swebench.yaml` for `-c swebench_backticks.yaml` in the scripts.
 
 ## Scoring the run
 
-**Evaluation runs automatically** at the end of `run_full.sh` and `run_smoke.sh`
-(disable with `AUTO_EVAL=0`). The post-run eval pass takes roughly 3-6h for the full
-500 at 4 workers. If the box has plenty of headroom you can overlap grading with the
-agent run (`EVAL_EVERY=900 ./run_full.sh` grades new results every 15 min — but on a
-constrained machine eval containers compete with agent containers and can hurt the
-score, so serial is the default). To score manually — e.g. mid-run on partial
-results, or to re-print a scorecard:
+**Evaluation runs automatically** after the agent finishes in both `run_full.sh` and
+`run_smoke.sh`, with the same parallelism (`WORKERS`, default 4). Expect roughly 3-6h
+for the full 500. Both phases resume if interrupted — already-graded instances are
+skipped on re-run. To score manually — e.g. on partial results mid-run, or to
+re-print a scorecard:
 
 ```bash
 ./evaluate.sh                  # scores results/verified-full

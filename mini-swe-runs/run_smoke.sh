@@ -44,10 +44,4 @@ uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
 
 echo
 echo "Smoke run finished — grading the patch(es) with the official harness..."
-
-# Auto-score unless disabled with AUTO_EVAL=0.
-if [[ "${AUTO_EVAL:-1}" == "1" ]]; then
-  ./evaluate.sh "$OUTPUT_DIR"
-else
-  echo "Skipped auto-eval (AUTO_EVAL=0). Score later with:  ./evaluate.sh $OUTPUT_DIR"
-fi
+./evaluate.sh "$OUTPUT_DIR"
