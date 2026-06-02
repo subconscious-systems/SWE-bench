@@ -16,13 +16,17 @@ export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 
 OUTPUT_DIR="${OUTPUT_DIR:-results/smoke}"
 
+# Smoke runs are scratch — start with a clean slate so stale entries from
+# earlier crashed attempts don't pollute the scorecard.
+rm -f "$OUTPUT_DIR/preds.json"
+
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
 
 uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
   --subset verified \
   --split test \
-  --slice '0:2' \
+  --slice '0:1' \
   --workers 2 \
   --output "$OUTPUT_DIR" \
   --model "$MODEL" \
@@ -39,4 +43,11 @@ uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
 #    add  -c agent.step_limit=50
 
 echo
-echo "Smoke run finished. Check $OUTPUT_DIR/preds.json — each entry should have a non-empty model_patch."
+echo "Smoke run finished — grading the patch(es) with the official harness..."
+
+# Auto-score unless disabled with AUTO_EVAL=0.
+if [[ "${AUTO_EVAL:-1}" == "1" ]]; then
+  ./evaluate.sh "$OUTPUT_DIR"
+else
+  echo "Skipped auto-eval (AUTO_EVAL=0). Score later with:  ./evaluate.sh $OUTPUT_DIR"
+fi

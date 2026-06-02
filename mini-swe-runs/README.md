@@ -116,6 +116,10 @@ swap `-c swebench.yaml` for `-c swebench_backticks.yaml` in the scripts.
 
 ## Scoring the run
 
+**Evaluation runs automatically** at the end of `run_full.sh` and `run_smoke.sh`
+(disable with `AUTO_EVAL=0`). To score manually — e.g. mid-run on partial results,
+or to re-print a scorecard:
+
 ```bash
 ./evaluate.sh                  # scores results/verified-full
 ./evaluate.sh results/smoke    # scores the smoke run

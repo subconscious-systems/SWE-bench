@@ -61,5 +61,10 @@ uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
 
 echo
 echo "Done. Predictions: $OUTPUT_DIR/preds.json  (trajectories in $OUTPUT_DIR/<instance_id>/)"
-echo "Score it (runs the official harness, prints a shareable scorecard):"
-echo "  ./evaluate.sh $OUTPUT_DIR"
+
+# Auto-score the run unless disabled with AUTO_EVAL=0.
+if [[ "${AUTO_EVAL:-1}" == "1" ]]; then
+  ./evaluate.sh "$OUTPUT_DIR"
+else
+  echo "Skipped auto-eval (AUTO_EVAL=0). Score later with:  ./evaluate.sh $OUTPUT_DIR"
+fi
