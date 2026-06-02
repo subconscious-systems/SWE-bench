@@ -23,6 +23,14 @@ MODEL="${MODEL:-openai/subconscious/tim-qwen3.6-27b}"
 export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
 
+# Make turn_failure_model.py importable inside uvx's python
+# (model.yaml selects it via model.model_class).
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+
+# Retry budget for transient API errors (5xx/connection; timeouts never retry
+# — see turn_failure_model.py). Upstream default is 10.
+export MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT="${MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT:-5}"
+
 INSTANCE="${1:-astropy__astropy-14096}"
 OUTPUT_DIR="${OUTPUT_DIR:-results/repro}"
 

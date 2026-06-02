@@ -26,7 +26,15 @@ MODEL="${MODEL:-openai/subconscious/tim-qwen3.6-27b}"
 # Pricing registry so litellm can compute per-task / total cost.
 export LITELLM_MODEL_REGISTRY_PATH="$PWD/litellm_registry.json"
 
-OUTPUT_DIR="${OUTPUT_DIR:-results/verified-full}"
+# Make turn_failure_model.py importable inside uvx's python
+# (model.yaml selects it via model.model_class).
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+
+# Retry budget for transient API errors (5xx/connection; timeouts never retry
+# — see turn_failure_model.py). Upstream default is 10.
+export MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT="${MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT:-5}"
+
+OUTPUT_DIR="${OUTPUT_DIR:-results/verified-full-v2}"
 
 # Agent parallelism = concurrent requests against the API (each worker has at
 # most one request in flight). Keep at 4 to stay within the endpoint's
