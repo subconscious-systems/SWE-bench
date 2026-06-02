@@ -1,3 +1,5 @@
+> **Subconscious fork:** to run SWE-bench Verified against our endpoint with mini-swe-agent, see [`mini-swe-runs/`](mini-swe-runs/). Everything below is the unmodified upstream README.
+
 <p align="center">
   <a href="http://swe-bench.github.io">
     <img src="docs/assets/figures/swellama_banner.svg" style="height: 10em" alt="Kawi the SWE-Llama" />
