@@ -45,7 +45,5 @@ uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
 
 echo
 echo "Done. Predictions: $OUTPUT_DIR/preds.json  (trajectories in $OUTPUT_DIR/<instance_id>/)"
-echo "Evaluate with the SWE-bench harness:"
-echo "  uv run --with swebench python -m swebench.harness.run_evaluation \\"
-echo "    --dataset_name princeton-nlp/SWE-bench_Verified --split test \\"
-echo "    --predictions_path $OUTPUT_DIR/preds.json --max_workers 4 --run_id verified-full"
+echo "Score it (runs the official harness, prints a shareable scorecard):"
+echo "  ./evaluate.sh $OUTPUT_DIR"
