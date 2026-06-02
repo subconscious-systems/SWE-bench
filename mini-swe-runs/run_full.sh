@@ -33,6 +33,22 @@ OUTPUT_DIR="${OUTPUT_DIR:-results/verified-full}"
 # Pinned for reproducibility — bump deliberately.
 MSWEA_VERSION="${MSWEA_VERSION:-2.3.0}"
 
+# Optional disk reaper: PRUNE_EVERY=600 ./run_full.sh removes the Docker image
+# of each completed instance every 600s (only instances already in preds.json
+# are touched, so this never races the in-flight workers). Leave at 0 if the
+# box has ~300GB+ free — you'll want the images again for local evaluation.
+PRUNE_EVERY="${PRUNE_EVERY:-0}"
+if (( PRUNE_EVERY > 0 )); then
+  (
+    while sleep "$PRUNE_EVERY"; do
+      ./prune_images.sh "$OUTPUT_DIR" || true
+    done
+  ) &
+  PRUNE_PID=$!
+  trap 'kill "$PRUNE_PID" 2>/dev/null || true' EXIT
+  echo "image reaper enabled: pruning completed-instance images every ${PRUNE_EVERY}s"
+fi
+
 uvx --from "mini-swe-agent==$MSWEA_VERSION" mini-extra swebench \
   --subset verified \
   --split test \

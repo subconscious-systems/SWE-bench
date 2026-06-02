@@ -12,7 +12,6 @@ against the Subconscious endpoint (`subconscious/tim-qwen3.6-27b`) using the
 
 > **Note on hardware:** the per-instance images are `x86_64`. On Apple Silicon they run
 > emulated (slow). Fine for the smoke test; prefer a Linux x86 box for the full run.
-> Images add up to a few hundred GB if all are kept — `docker system prune` between batches.
 
 ## Setup
 
@@ -56,6 +55,27 @@ again and it continues where it left off.
 - Force a full redo of everything: add `--redo-existing` to the `mini-extra` command
 - Redo specific instances: delete their entries from `preds.json` (or delete `preds.json`
   for all) and re-run
+
+## Disk usage / image pruning
+
+Each instance pulls its own `x86_64` Docker image; a full Verified run accumulates a few
+hundred GB if all 500 are kept (containers self-clean — only images pile up).
+
+If the run box has ~300GB+ free, do nothing — keeping the images is *better*, because
+`./evaluate.sh` reuses them and pruning means re-pulling during evaluation.
+
+On a disk-constrained box, enable the built-in reaper:
+
+```bash
+PRUNE_EVERY=600 ./run_full.sh   # every 10 min, delete images of completed instances
+```
+
+It only removes images for instances already recorded in `preds.json`, so it never races
+the in-flight workers. You can also sweep manually anytime (during or after a run):
+
+```bash
+./prune_images.sh results/verified-full
+```
 
 ## Configuration
 
