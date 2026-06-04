@@ -18,7 +18,7 @@ Python is **uv-managed** (`python-preference = only-managed` in `pyproject.toml`
 
 ```bash
 cd mini-swe-runs
-cp .env.example .env     # QWEN_API_KEY, QWEN_BASE_URL, KIMI_* placeholders
+cp .env.example .env     # QWEN_*, KIMI_*, SPARK_* placeholders
 uv python install 3.12   # once per machine (uv downloads a full CPython with lzma, ssl, …)
 uv sync --frozen         # creates .venv from uv.lock + .python-version
 uv run python -c "import lzma; print('ok')"   # sanity check
@@ -32,6 +32,7 @@ If you previously used pyenv here, remove the old venv first: `rm -rf .venv && u
 
 ```bash
 ./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
+./scripts/run.sh yaml/qwen/spark-smoke.yaml smoke-spark
 ./scripts/run.sh yaml/kimi/smoke.yaml smoke-kimi
 ```
 
@@ -41,6 +42,7 @@ Success: `results/smoke-qwen/preds.json` with non-empty `model_patch` entries.
 
 ```bash
 ./scripts/run.sh yaml/qwen/verified-full.yaml qwen-june
+./scripts/run.sh yaml/qwen/spark-8bit-v1.yaml spark-8bit-v1-june
 ./scripts/run.sh yaml/kimi/verified-full.yaml kimi-june
 ```
 
@@ -93,7 +95,7 @@ Completed instances are in `preds.json` and skipped on re-run. Smoke yamls set `
 |------|--------|
 | Run name | second arg → `results/<RUN_NAME>/` |
 | Full run definition | `yaml/qwen/*.yaml`, `yaml/kimi/*.yaml` |
-| Secrets | `.env` (`QWEN_*`, `KIMI_*`) |
+| Secrets | `.env` (`QWEN_*`, `KIMI_*`, `SPARK_*`) |
 | Agent/model limits | `agent` / `model` in run-spec yaml |
 | Token pricing | `litellm_registry.json` |
 

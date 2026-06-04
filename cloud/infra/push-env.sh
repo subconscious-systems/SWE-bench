@@ -42,11 +42,12 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 TMP="$(mktemp)"
+trap 'rm -f "$TMP"' EXIT
 cp "$ENV_LOCAL" "$TMP"
 chmod 600 "$TMP"
-ensure_runner_layout
-scp_to_remote "$TMP" "$REMOTE_ENV"
-rm -f "$TMP"
 
-ssh_cmd "chmod 600 '$REMOTE_ENV' && test -f '$REMOTE_ENV' && grep -qE '^(QWEN_API_KEY|OPENAI_API_KEY)=.' '$REMOTE_ENV'"
+echo "Uploading .env to $REMOTE_ENV (SSH stream; avoids scp/sftp over SSM) ..."
+ssh_upload_file "$TMP" "$REMOTE_ENV"
+
+ssh_cmd "test -f '$REMOTE_ENV' && grep -qE '^(QWEN_API_KEY|OPENAI_API_KEY)=.' '$REMOTE_ENV'"
 echo "Pushed .env to $REMOTE_ENV (API key present)."

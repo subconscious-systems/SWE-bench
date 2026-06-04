@@ -232,8 +232,29 @@ build_ssh_openssh_args() {
     -o "UserKnownHostsFile=${CLOUD_KNOWN_HOSTS}"
     -o GlobalKnownHostsFile=/dev/null
     -o LogLevel=QUIET
+    -o ConnectTimeout=30
+    -o ServerAliveInterval=15
+    -o ServerAliveCountMax=3
     -o "ProxyCommand=$(ssh_proxy_cmd "$instance_id")"
   )
+}
+
+# Upload a local file over SSH stdin (more reliable than scp/sftp over SSM).
+ssh_upload_file() {
+  local local_path="$1"
+  local remote_path="$2"
+  require_ssm_plugin
+  local instance_id
+  instance_id="$(get_instance_id)"
+  push_ec2_ssh_key "$instance_id"
+  resolve_ssh_key
+  build_ssh_openssh_args "$instance_id"
+  local qpath
+  qpath="$(printf '%q' "$remote_path")"
+  ssh -i "$CLOUD_SSH_KEY" "${CLOUD_SSH_OPENSSH_ARGS[@]}" \
+    "${REMOTE_USER}@${instance_id}" \
+    "set -euo pipefail; dest=$qpath; mkdir -p \"\$(dirname \"\$dest\")\"; tmp=\"\${dest}.push.\$\$\"; cat >\"\$tmp\"; chmod 600 \"\$tmp\"; mv -f \"\$tmp\" \"\$dest\"" \
+    <"$local_path"
 }
 
 # SSH/scp/rsync over SSM (no inbound port 22).
