@@ -3,22 +3,19 @@
 # print a shareable scorecard.
 #
 # Usage:
-#   ./scripts/evaluate.sh [results_dir] [run_id]
+#   ./scripts/evaluate.sh [RUN_NAME] [run_id]
 set -euo pipefail
-MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_run_name.sh
+source "$SCRIPT_DIR/_run_name.sh"
+
+msr_resolve_run_name "${1:-verified-full}"
+RUN_ID="${2:-$RUN_NAME}"
 cd "$MSR_ROOT"
 
 ulimit -n 65536 2>/dev/null || echo "warn: could not raise fd limit (ulimit -n = $(ulimit -n))" >&2
 
-RESULTS_DIR="${1:-results/verified-full}"
-RUN_ID="${2:-$(basename "$RESULTS_DIR")}"
 WORKERS="${WORKERS:-4}"
-
-# Resolve to absolute path (run.sh may pass OUTPUT_DIR as absolute from bootstrap).
-if [[ "$RESULTS_DIR" != /* ]]; then
-  RESULTS_DIR="$MSR_ROOT/$RESULTS_DIR"
-fi
-RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
 PREDS_JSON="$RESULTS_DIR/preds.json"
 
 [[ -f "$PREDS_JSON" ]] || { echo "error: no preds.json at $PREDS_JSON" >&2; exit 1; }

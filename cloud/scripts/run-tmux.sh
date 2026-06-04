@@ -7,8 +7,8 @@
 #   ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 #   TMUX_SESSION=swebench-qwen-opt ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 set -euo pipefail
-# shellcheck source=_common.sh
-source "$(dirname "$0")/_common.sh"
+# shellcheck source=../infra/_common.sh
+source "$(dirname "$0")/../infra/_common.sh"
 
 cloud_parse_stage "$0" "$@"
 shift
@@ -32,4 +32,4 @@ remote_exec "cd '$MINI_SWE_RUNS_PATH' && \
   echo Started: $run_cmd && \
   echo 'tmux session:' '$SESSION' && \
   echo 'Log: tail -f' '$MINI_SWE_RUNS_PATH/results/$RUN_NAME/minisweagent.log' && \
-  echo 'Attach: ./scripts/ssh.sh' '$STAGE' '# tmux attach -t' '$SESSION'"
+  echo 'Attach: ./infra/ssh.sh' '$STAGE' '# tmux attach -t' '$SESSION'"

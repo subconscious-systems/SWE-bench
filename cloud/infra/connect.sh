@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SSM shell as ubuntu (no SSH key). Prefer ./scripts/ssh.sh for full SSH/rsync parity.
+# SSM shell as ubuntu (no SSH key). Prefer ./infra/ssh.sh for full SSH/rsync parity.
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"

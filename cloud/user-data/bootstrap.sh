@@ -1,6 +1,6 @@
 #!/bin/bash
 # Idempotent runner setup: Docker, uv, /data volume, repo paths.
-# Run via: ./scripts/bootstrap.sh <stage>
+# Run via: ./infra/bootstrap.sh <stage>
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 

@@ -22,9 +22,9 @@ wait_for_ssm "$INSTANCE_ID"
 
 echo
 echo "Stack deployed. Bootstrap the instance next:"
-echo "  ./scripts/bootstrap.sh $STAGE"
+echo "  ./infra/bootstrap.sh $STAGE"
 echo
 echo "Then:"
-echo "  ./scripts/push-env.sh $STAGE"
-echo "  ./scripts/sync.sh $STAGE --install"
+echo "  ./infra/push-env.sh $STAGE"
+echo "  ./infra/sync.sh $STAGE --install"
 echo "  ./scripts/run.sh $STAGE yaml/qwen/smoke.yaml smoke-qwen"

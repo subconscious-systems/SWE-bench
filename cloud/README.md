@@ -2,7 +2,7 @@
 
 Provision a dedicated **x86_64** EC2 host for [mini-swe-runs](../mini-swe-runs/) (SWE-bench Verified × mini-swe-agent), with **SSM/SSH** access, persistent disk, and optional **Cloudflare R2** archival.
 
-Infrastructure is defined in [`sst.config.ts`](sst.config.ts) ([SST Ion v3](https://sst.dev/docs/)). The benchmark scripts themselves live in `mini-swe-runs/` and are synced to the instance unchanged.
+Infrastructure is defined in [`sst.config.ts`](sst.config.ts) and [`infra/runner.ts`](infra/runner.ts) ([SST Ion v3](https://sst.dev/docs/)). Shell helpers live in [`infra/`](infra/) (provision, sync, destroy) and [`scripts/`](scripts/) (benchmark runs and results). Benchmark logic on the instance is in `mini-swe-runs/scripts/`.
 
 ## Prerequisites (laptop)
 
@@ -26,12 +26,12 @@ Every cloud script takes **`<stage>`** as its first argument. One stage = one EC
 
 ```bash
 cd cloud
-./scripts/deploy.sh qwen          # SST deploy + wait for SSM
-./scripts/bootstrap.sh qwen       # Docker, uv, /data layout (idempotent)
+./infra/deploy.sh qwen          # SST deploy + wait for SSM
+./infra/bootstrap.sh qwen       # Docker, uv, /data layout (idempotent)
 
 cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BASE_URL, …
-./scripts/push-env.sh qwen
-./scripts/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
+./infra/push-env.sh qwen
+./infra/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
 
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
 ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
@@ -41,17 +41,17 @@ cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BA
 Kimi on a separate stack:
 
 ```bash
-./scripts/deploy.sh kimi
-./scripts/bootstrap.sh kimi
-./scripts/push-env.sh kimi
-./scripts/sync.sh kimi --install
+./infra/deploy.sh kimi
+./infra/bootstrap.sh kimi
+./infra/push-env.sh kimi
+./infra/sync.sh kimi --install
 ./scripts/run-tmux.sh kimi yaml/kimi/verified-full.yaml kimi-june
 ```
 
 Attach to a running tmux job:
 
 ```bash
-./scripts/ssh.sh qwen
+./infra/ssh.sh qwen
 tmux attach -t swebench-qwen-opt-v1   # or your TMUX_SESSION / RUN_NAME
 tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 ```
@@ -69,7 +69,7 @@ tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 Override at deploy time:
 
 ```bash
-INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=400 ./scripts/deploy.sh qwen
+INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=400 ./infra/deploy.sh qwen
 ```
 
 ## Python toolchain (`mini-swe-runs`)
@@ -84,7 +84,7 @@ Run scripts use `uv run` (not `uvx`). On the instance, `install-deps.sh` runs `u
 
 ## Bootstrap
 
-After `deploy.sh`, run [`./scripts/bootstrap.sh`](scripts/bootstrap.sh) `<stage>`. It runs [`user-data/bootstrap.sh`](user-data/bootstrap.sh) on the instance via SSM (Docker CE, uv, `/data` volume, `/opt/swe-bench` layout). Idempotent — safe to re-run.
+After `deploy.sh`, run [`./infra/bootstrap.sh`](infra/bootstrap.sh) `<stage>`. It runs [`user-data/bootstrap.sh`](user-data/bootstrap.sh) on the instance via SSM (Docker CE, uv, `/data` volume, `/opt/swe-bench` layout). Idempotent — safe to re-run.
 
 Verifies:
 
@@ -98,51 +98,61 @@ Logs on the instance: `/var/log/swe-bench-bootstrap.log`
 
 Each **stage** has its own EC2 instance (`swe-bench-runner-<stage>`) and data EBS volume (`swe-bench-runner-<stage>-data`, 300 GiB by default). Destroying `qwen` does not touch `kimi`.
 
+Export results before destroy if you need them:
+
+```bash
+./scripts/pull-results.sh qwen my-run-name
+./scripts/upload-results.sh qwen my-run-name   # zip → R2 (optional)
+```
+
 ```bash
 cd cloud
-./scripts/destroy.sh qwen        # remove stack; volume kept
-./scripts/destroy_data.sh qwen    # delete data volume (after stack is gone)
-./scripts/deploy.sh qwen         # new instance
-./scripts/bootstrap.sh qwen
-./scripts/push-env.sh qwen
-./scripts/sync.sh qwen --install
+./infra/destroy.sh qwen          # sst remove — deletes stack AND data volume
+./infra/deploy.sh qwen
+./infra/bootstrap.sh qwen
+./infra/push-env.sh qwen
+./infra/sync.sh qwen --install
 ```
 
-Full wipe in one go:
+`destroy.sh` uses a **triple confirm** and warns that all `/data` is lost. There is no separate volume-delete script.
 
-```bash
-./scripts/destroy.sh qwen && ./scripts/destroy_data.sh qwen
-```
+**Legacy volumes:** Stacks deployed before `retainOnDelete` was removed may leave an orphaned EBS volume after `sst remove`. Delete those once in the AWS console (tag `swe-bench-runner-<stage>-data`).
 
 Pause compute but keep the same instance and all data:
 
 ```bash
-./scripts/stop.sh qwen           # no compute charge; ~$24/mo for volume
-./scripts/start.sh qwen          # resume when needed
+./infra/stop.sh qwen           # no compute charge; ~$24/mo for volume still applies
+./infra/start.sh qwen          # resume when needed
 ```
 
 ## Scripts
 
-All scripts: `./scripts/<name>.sh <stage> [...]`
+Infra: `./infra/<name>.sh <stage> [...]` — provision and operate the host.
 
 | Script | Purpose |
 |--------|---------|
 | `deploy.sh` | `sst deploy` + wait for SSM |
 | `bootstrap.sh` | Instance setup via SSM (Docker, uv, `/data`) — run after deploy |
-| `destroy.sh` | `sst remove` — stack only; data volume retained |
-| `destroy_data.sh` | Delete `swe-bench-runner-<stage>-data` EBS volume (must be detached) |
+| `destroy.sh` | `sst remove` — deletes stack **and** data EBS volume (destructive) |
 | `stop.sh` / `start.sh` | Stop/start EC2 (instance + disk retained; no compute charge while stopped) |
 | `push-env.sh` | Copy `mini-swe-runs/.env` to instance |
 | `sync.sh` | Rsync repo → `/opt/swe-bench` (`--install` → `install-deps.sh`) |
 | `install-deps.sh` | `uv sync --frozen` on EC2 |
 | `ssh.sh` | Interactive shell as **ubuntu** via SSH over SSM (used by rsync/scp) |
 | `connect.sh` | SSM shell as **ubuntu** (no SSH key; `sudo -iu ubuntu`) |
+
+Benchmarks: `./scripts/<name>.sh <stage> [...]` — run SWE-bench on a deployed host.
+
+Where a run is referenced, pass **`RUN_NAME`** only (same as the third arg to `run.sh`, e.g. `smoke-qwen`) — not `results/...`.
+
+| Script | Purpose |
+|--------|---------|
 | `run.sh` | `<yaml-path> <RUN_NAME>` → remote `mini-swe-runs/scripts/run.sh` (foreground) |
 | `run-tmux.sh` | Same args, detached tmux session (`TMUX_SESSION` overrides session name) |
 | `prepull.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
-| `summary.sh` | Scorecard + progress on instance |
-| `pull-results.sh` | Rsync artifacts to laptop |
-| `upload-results.sh` | Zip on EC2 → optional R2 upload |
+| `summary.sh` | Remote `mini-swe-runs/scripts/summary.sh` (scorecard + status) |
+| `pull-results.sh` | `[RUN_NAME]` → rsync artifacts to laptop |
+| `upload-results.sh` | `[RUN_NAME]` → zip on EC2 → optional R2 upload |
 
 ## Secrets (`.env`)
 
@@ -171,23 +181,28 @@ R2_PREFIX=swe-bench-runs
 | Action | Data on `/data`? |
 |--------|------------------|
 | EC2 **stop** / **start** | Yes (same instance, volume attached) |
-| `./scripts/stop.sh <stage>` | Yes |
-| `./scripts/start.sh <stage>` | Yes — resumes the stopped instance |
-| `./scripts/destroy.sh <stage>` | Yes — volume detached but retained (~$24/mo) |
-| `./scripts/destroy_data.sh <stage>` | **No** — volume permanently deleted |
+| `./infra/stop.sh <stage>` | Yes |
+| `./infra/start.sh <stage>` | Yes — resumes the stopped instance |
+| `./scripts/pull-results.sh` / `upload-results.sh` | Export copy (do before destroy) |
+| `./infra/destroy.sh <stage>` | **No** — SST removes stack and data volume |
 
 ## Cost (us-east-1, on-demand)
 
 - `m6i.2xlarge` ≈ **$0.38/hr** while running
-- 300 GiB gp3 ≈ **~$24/mo** while volume exists (even if instance stopped)
+- 300 GiB gp3 ≈ **~$24/mo** while volume exists (including while instance is stopped)
+- `./infra/destroy.sh` stops volume billing by deleting the EBS volume
 
 ## Debugging
 
 ```bash
-./scripts/ssh.sh qwen
+./infra/ssh.sh qwen
 cd /opt/swe-bench/mini-swe-runs
-./scripts/status.sh results/qwen-june
+./scripts/status.sh qwen-june
 uv run pier --help
+
+# Or from laptop:
+./scripts/status.sh qwen smoke-qwen
+./scripts/summary.sh qwen smoke-qwen
 # Claude Code (install once on instance): curl -fsSL https://claude.ai/install.sh | bash
 ```
 
@@ -199,5 +214,7 @@ export AWS_REGION=us-east-1
 npx sst deploy --stage qwen
 npx sst remove --stage qwen
 ```
+
+`npx sst remove` deletes the data volume (same as `./infra/destroy.sh`). Non-`prod` stages use `removal: remove` in `sst.config.ts`; a `prod` stage retains the whole stack on remove.
 
 Outputs include `instanceId`, `instancePublicIp`, `dataVolumeId`, `repoPath`, `miniSweRunsPath`.

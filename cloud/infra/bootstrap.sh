@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Idempotent instance setup via SSM: Docker, uv, /data volume, repo paths.
 # Run after deploy.sh. Safe to re-run.
-# Usage: ./scripts/bootstrap.sh <stage>
+# Usage: ./infra/bootstrap.sh <stage>
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"

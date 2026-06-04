@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Rsync repo to EC2 (excludes .env, results, heavy dirs).
 #
-# Usage: ./scripts/sync.sh <stage> [--install]
+# Usage: ./infra/sync.sh <stage> [--install]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"

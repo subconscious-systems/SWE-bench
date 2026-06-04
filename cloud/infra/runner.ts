@@ -67,19 +67,15 @@ export function createRunner() {
     },
   });
 
-  const dataVolume = new aws.ebs.Volume(
-    "RunnerData",
-    {
-      availabilityZone: instance.availabilityZone,
-      size: dataVolumeSize,
-      type: "gp3",
-      encrypted: true,
-      tags: {
-        Name: `swe-bench-runner-${$app.stage}-data`,
-      },
+  const dataVolume = new aws.ebs.Volume("RunnerData", {
+    availabilityZone: instance.availabilityZone,
+    size: dataVolumeSize,
+    type: "gp3",
+    encrypted: true,
+    tags: {
+      Name: `swe-bench-runner-${$app.stage}-data`,
     },
-    { retainOnDelete: true },
-  );
+  });
 
   const volumeAttachment = new aws.ec2.VolumeAttachment("RunnerDataAttach", {
     deviceName: "/dev/sdf",

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Usage: ./scripts/push-env.sh <stage> [--dry-run] [--diff]
+# Usage: ./infra/push-env.sh <stage> [--dry-run] [--diff]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"

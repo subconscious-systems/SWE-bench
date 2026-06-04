@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Free disk by removing Docker images for completed instances in preds.json.
-# Usage: ./scripts/prune_images.sh [results_dir]
+# Usage: ./scripts/prune_images.sh [RUN_NAME]
 set -euo pipefail
-MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$MSR_ROOT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_run_name.sh
+source "$SCRIPT_DIR/_run_name.sh"
 
-RESULTS_DIR="${1:-results/verified-full}"
+msr_resolve_run_name "${1:-verified-full}"
 PREDS="$RESULTS_DIR/preds.json"
 [[ -f "$PREDS" ]] || { echo "no preds.json in $RESULTS_DIR — nothing to prune"; exit 0; }
 

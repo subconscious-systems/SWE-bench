@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Wall-clock report for a run (agent + eval if present).
-# Usage: ./scripts/timings.sh [results_dir]
+# Usage: ./scripts/timings.sh [RUN_NAME]
 set -euo pipefail
-MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$MSR_ROOT"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_run_name.sh
+source "$SCRIPT_DIR/_run_name.sh"
 
-RESULTS_DIR="${1:-results/verified-full}"
-[[ -f "$RESULTS_DIR/minisweagent.log" ]] || { echo "error: no minisweagent.log in $RESULTS_DIR" >&2; exit 1; }
+msr_resolve_run_name "${1:-verified-full}"
+msr_require_results_dir
+[[ -f "$RESULTS_DIR/minisweagent.log" ]] || {
+  echo "error: no minisweagent.log in $RESULTS_DIR" >&2
+  exit 1
+}
 
 python3 - "$RESULTS_DIR" <<'EOF'
 import re, sys, statistics

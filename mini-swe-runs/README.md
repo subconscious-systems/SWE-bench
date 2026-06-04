@@ -58,10 +58,10 @@ Set `benchmark.run_eval: false` in a yaml to skip the harness after the agent.
 From [`../cloud/`](../cloud/) (see [`cloud/README.md`](../cloud/README.md) for full setup):
 
 ```bash
-./scripts/deploy.sh qwen
-./scripts/bootstrap.sh qwen
-./scripts/push-env.sh qwen
-./scripts/sync.sh qwen --install
+./infra/deploy.sh qwen
+./infra/bootstrap.sh qwen
+./infra/push-env.sh qwen
+./infra/sync.sh qwen --install
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
 ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 ```
@@ -76,10 +76,10 @@ Completed instances are in `preds.json` and skipped on re-run. Smoke yamls set `
 ```bash
 ./scripts/prepull.sh        # all 500 images
 ./scripts/prepull.sh 25     # first 25
-./scripts/prune_images.sh results/qwen-june
+./scripts/prune_images.sh qwen-june
 ```
 
-`CLEAN=True ./scripts/evaluate.sh results/qwen-june qwen-june` — eval with container cleanup.
+`CLEAN=True ./scripts/evaluate.sh qwen-june` — eval with container cleanup.
 
 ## Configuration
 
@@ -99,13 +99,19 @@ Hydration (`scripts/hydrate_run_yaml.py`) expands `${VAR}` in yaml from `.env` a
 Eval runs automatically after the agent when `benchmark.run_eval` is true (default). Manual:
 
 ```bash
-MODEL_LABEL=subconscious/tim-qwen3.6-27b ./scripts/evaluate.sh results/qwen-june qwen-june
+MODEL_LABEL=subconscious/tim-qwen3.6-27b ./scripts/evaluate.sh qwen-june
 ```
+
+Optional second arg to `evaluate.sh`: harness `run_id` (defaults to `RUN_NAME`).
 
 ## Other scripts
 
+Scripts that take a run use **`RUN_NAME`** only (e.g. `smoke-qwen`), not `results/...`.
+
 | Script | Purpose |
 |--------|---------|
+| `scripts/summary.sh` | Scorecard + paths + recent status |
 | `scripts/status.sh` | In-progress snapshot |
 | `scripts/timings.sh` | Wall-clock report |
+| `scripts/prune_images.sh` | Drop Docker images for completed instances |
 | `scripts/repro_runaway.sh` | Single-instance repro with trace proxy |

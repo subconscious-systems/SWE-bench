@@ -7,8 +7,8 @@
 #   ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
 #   ./scripts/run.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 set -euo pipefail
-# shellcheck source=_common.sh
-source "$(dirname "$0")/_common.sh"
+# shellcheck source=../infra/_common.sh
+source "$(dirname "$0")/../infra/_common.sh"
 
 cloud_parse_stage "$0" "$@"
 shift

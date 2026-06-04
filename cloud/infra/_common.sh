@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Shared helpers for cloud/scripts. Source from other scripts; do not execute directly.
+# Shared helpers for cloud/infra and cloud/scripts. Source from other scripts; do not execute directly.
 set -euo pipefail
 
-_CLOUD_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CLOUD_DIR="$(cd "$_CLOUD_SCRIPTS_DIR/.." && pwd)"
+_CLOUD_INFRA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLOUD_DIR="$(cd "$_CLOUD_INFRA_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CLOUD_DIR/.." && pwd)"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 REMOTE_USER="${REMOTE_USER:-ubuntu}"
@@ -37,6 +37,17 @@ cloud_parse_stage() {
     exit 1
   fi
   export STAGE
+}
+
+# Validate optional RUN_NAME for cloud benchmark scripts (bare name only, no paths).
+cloud_parse_run_name() {
+  local raw="${1:-verified-full-v2}"
+  if [[ -z "$raw" || "$raw" == */* ]]; then
+    echo "error: pass RUN_NAME only (e.g. smoke-qwen), not a path" >&2
+    exit 1
+  fi
+  RUN_NAME="$raw"
+  export RUN_NAME
 }
 
 cloud_print_context() {
@@ -80,99 +91,42 @@ get_instance_id() {
     --query 'Reservations[0].Instances[0].InstanceId' \
     --output text 2>/dev/null || true)"
   if [[ -z "$id" || "$id" == "None" ]]; then
-    echo "error: no EC2 instance with tag Name=$name (deploy with ./scripts/deploy.sh <stage>?)" >&2
+    echo "error: no EC2 instance with tag Name=$name (deploy with ./infra/deploy.sh <stage>?)" >&2
     exit 1
   fi
   echo "$id"
 }
 
-# Data EBS volume for this stage (one per SST stack). May exist after stack destroy.
-get_data_volume_id() {
-  local name="swe-bench-runner-${STAGE}-data"
-  local id
-  id="$(aws ec2 describe-volumes \
-    --filters "Name=tag:Name,Values=$name" \
-    --query 'Volumes[?State!=`deleted`] | [0].VolumeId' \
-    --output text 2>/dev/null || true)"
-  if [[ -n "$id" && "$id" != "None" ]]; then
-    echo "$id"
-    return 0
-  fi
-  local instance_id
-  instance_id="$(aws ec2 describe-instances \
-    --filters \
-      "Name=tag:Name,Values=swe-bench-runner-${STAGE}" \
-      "Name=instance-state-name,Values=pending,running,stopping,stopped" \
-    --query 'Reservations[0].Instances[0].InstanceId' \
-    --output text 2>/dev/null || true)"
-  if [[ -z "$instance_id" || "$instance_id" == "None" ]]; then
-    return 1
-  fi
-  id="$(aws ec2 describe-volumes \
-    --filters "Name=attachment.instance-id,Values=$instance_id" \
-    --query 'Volumes[?Attachments[0].Device==`/dev/sdf` || Attachments[0].Device==`/dev/xvdf` || Attachments[0].Device==`/dev/nvme1n1`] | [0].VolumeId' \
-    --output text 2>/dev/null || true)"
-  if [[ -n "$id" && "$id" != "None" ]]; then
-    echo "$id"
-    return 0
-  fi
-  return 1
-}
-
-delete_data_volume() {
-  local vol_id="$1"
-  local i state
-  for i in $(seq 1 60); do
-    state="$(aws ec2 describe-volumes \
-      --volume-ids "$vol_id" \
-      --query 'Volumes[0].State' \
-      --output text 2>/dev/null || echo deleted)"
-    case "$state" in
-      deleted|None|"") echo "Data volume $vol_id deleted."; return 0 ;;
-      available)
-        aws ec2 delete-volume --volume-id "$vol_id"
-        echo "Deleted data volume $vol_id"
-        return 0
-        ;;
-      in-use) sleep 5 ;;
-    esac
-    sleep 5
-  done
-  echo "error: data volume $vol_id still $state after 5m — delete manually in AWS console" >&2
-  return 1
-}
-
 cloud_confirm_destroy() {
+  local destroy_phrase="destroy $STAGE"
   echo
-  echo "WARNING: This will destroy the SST stack for stage '$STAGE' ($(cloud_print_context))."
+  echo "======================================================================"
+  echo "PERMANENT DESTROY — stage '$STAGE' ($(cloud_print_context))"
+  echo "======================================================================"
+  echo
+  echo "This runs 'sst remove' and deletes ALL resources for this stage:"
   echo "  - EC2 instance swe-bench-runner-$STAGE"
+  echo "  - Data EBS volume swe-bench-runner-$STAGE-data (default ~300 GiB gp3)"
+  echo "    Docker images, synced repo, and ALL benchmark results on /data"
   echo "  - IAM role, security group, volume attachment"
-  echo "  - Data EBS volume swe-bench-runner-$STAGE-data will be RETAINED (~\$24/mo for 300 GiB gp3)"
-  echo "    Run ./scripts/destroy_data.sh $STAGE to delete the volume."
   echo
-  read -r -p "Continue? [y/N] " ans
+  echo "Alternatives (keep data or export first):"
+  echo "  Pause compute, keep volume:  ./infra/stop.sh $STAGE"
+  echo "  Copy results to laptop:      ./scripts/pull-results.sh $STAGE <RUN_NAME>"
+  echo "  Archive zip to R2:           ./scripts/upload-results.sh $STAGE <RUN_NAME>"
+  echo "                               (add --trajectories if needed)"
+  echo
+  read -r -p "Continue with permanent destroy? [y/N] " ans
   case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted."; exit 0 ;; esac
   echo
-  read -r -p "Type '$STAGE' to confirm destroy: " confirm
-  if [[ "$confirm" != "$STAGE" ]]; then
-    echo "Aborted (confirmation did not match stage name)."
+  read -r -p "Type '$destroy_phrase' to confirm: " confirm
+  if [[ "$confirm" != "$destroy_phrase" ]]; then
+    echo "Aborted (expected exactly: $destroy_phrase)."
     exit 0
   fi
-}
-
-cloud_confirm_destroy_data() {
-  local vol_id="$1"
   echo
-  echo "WARNING: This will PERMANENTLY delete the data EBS volume for stage '$STAGE'."
-  echo "  Volume: $vol_id (tag Name=swe-bench-runner-$STAGE-data)"
-  echo "  Region/account: $(cloud_print_context)"
-  echo "  ALL contents on /data will be lost (Docker images, synced repo, benchmark results)."
-  echo
-  read -r -p "Continue? [y/N] " ans
-  case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted."; exit 0 ;; esac
-  echo
-  read -r -p "Type '$STAGE' to confirm volume deletion: " confirm
-  if [[ "$confirm" != "$STAGE" ]]; then
+  read -r -p "Type '$STAGE' again to confirm: " confirm2
+  if [[ "$confirm2" != "$STAGE" ]]; then
     echo "Aborted (confirmation did not match stage name)."
     exit 0
   fi

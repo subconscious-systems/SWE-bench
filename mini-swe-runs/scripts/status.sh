@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # Read-only status snapshot of an in-progress run.
-# Usage: ./scripts/status.sh [results_dir] [resume_epoch]
+# Usage: ./scripts/status.sh [RUN_NAME] [resume_epoch]
 set -euo pipefail
-MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=_run_name.sh
+source "$SCRIPT_DIR/_run_name.sh"
 
-DIR="${1:-results/verified-full-v2}"
+msr_resolve_run_name "${1:-}"
 SINCE="${2:-$(date -v-3H +%s 2>/dev/null || date -d '3 hours ago' +%s)}"
+msr_require_results_dir
+cd "$RESULTS_DIR"
 
-RESULTS="$MSR_ROOT/$DIR"
-[[ -d "$RESULTS" ]] || RESULTS="$DIR"
-cd "$RESULTS"
-
-echo "=== $(date '+%H:%M:%S')  $DIR ==="
+echo "=== $(date '+%H:%M:%S')  results/$RUN_NAME ==="
 python3 - "$SINCE" << 'EOF'
 import json, glob, os, sys, datetime as dt, statistics as st
 

@@ -61,5 +61,5 @@ echo
 echo "Agent done. Predictions: $OUTPUT_DIR/preds.json"
 
 if [[ "$RUN_EVAL" == "1" ]]; then
-  "$MSR_ROOT/scripts/evaluate.sh" "$OUTPUT_DIR" "$RUN_NAME"
+  "$MSR_ROOT/scripts/evaluate.sh" "$RUN_NAME"
 fi
