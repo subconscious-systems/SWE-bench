@@ -27,4 +27,4 @@ echo
 echo "Then:"
 echo "  ./infra/push-env.sh $STAGE"
 echo "  ./infra/sync.sh $STAGE --install"
-echo "  ./scripts/run.sh $STAGE yaml/qwen/smoke.yaml smoke-qwen"
+echo "  ./scripts/run.sh $STAGE yaml/{qwen,kimi}/smoke.yaml smoke-{qwen,kimi}"
