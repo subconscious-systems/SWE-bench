@@ -30,7 +30,7 @@ Re-run the **same** yaml + `RUN_NAME` to resume (`results/<RUN_NAME>/preds.json`
 | Variable | Used by |
 |----------|---------|
 | `QWEN_API_KEY`, `QWEN_BASE_URL` | `yaml/qwen/*.yaml` |
-| `KIMI_API_KEY`, `KIMI_BASE_URL` | `yaml/kimi/*.yaml` (default host: `https://kimi.subconscious.dev/v1`) |
+| `KIMI_API_KEY`, `KIMI_BASE_URL` | `yaml/kimi/*.yaml` → `OPENAI_BASE_URL` + `model.model_kwargs.api_base` (use `http://kimi.subconscious.dev/v1`, not https) |
 
 ## Adding a variant
 
