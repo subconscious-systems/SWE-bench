@@ -1,0 +1,40 @@
+meta:
+  model_name: openai/subconscious/tim-kimi2.6
+  model_label: subconscious/tim-kimi2.6
+  agent_workers: 4
+  eval_workers: 4
+
+env:
+  OPENAI_API_KEY: ${KIMI_API_KEY}
+  MSWEA_API_KEY: ${KIMI_API_KEY}
+  MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT: "5"
+  MSWEA_COST_TRACKING: ignore_errors
+  LITELLM_MODEL_REGISTRY_PATH: ${MSR_ROOT}/litellm_registry.json
+  PYTHONPATH: ${MSR_ROOT}
+
+benchmark:
+  subset: verified
+  split: test
+  clean_start: false
+  redo_existing: false
+
+agent:
+  step_limit: 750
+  cost_limit: 0
+  wall_time_limit_seconds: 5400
+
+environment:
+  pull_timeout: 1800
+
+model:
+  model_class: turn_failure_model.TurnFailureModel
+  model_kwargs:
+    custom_llm_provider: openai
+    num_retries: 0
+    timeout: 320
+    max_tokens: 65536
+    temperature: 1.0
+    top_p: 0.95
+    drop_params: true
+    parallel_tool_calls: true
+    api_base: ${KIMI_BASE_URL}

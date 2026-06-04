@@ -1,156 +1,107 @@
 # SWE-bench Verified × mini-swe-agent × Subconscious
 
 Run [SWE-bench Verified](https://huggingface.co/datasets/princeton-nlp/SWE-bench_Verified) (500 instances)
-against the Subconscious endpoint (`subconscious/tim-qwen3.6-27b`) using the
-[mini-swe-agent](https://mini-swe-agent.com) harness.
+against the Subconscious endpoint using the [mini-swe-agent](https://mini-swe-agent.com) harness.
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) — the scripts run mini-swe-agent via `uvx`, no install needed
+- [uv](https://docs.astral.sh/uv/) — scripts use `uv run` with a pinned lockfile
 - Docker, running — each instance executes in its own container
-- A Subconscious API key
+- API keys in `.env` (see `.env.example`)
 
-> **Note on hardware:** the per-instance images are `x86_64`. On Apple Silicon they run
-> emulated (slow). Fine for the smoke test; prefer a Linux x86 box for the full run.
+> **Note on hardware:** instance images are `x86_64`. On Apple Silicon they run emulated (slow).
+> Use a Linux x86 box for the full run.
 
 ## Setup
 
 ```bash
 cd mini-swe-runs
-cp .env.example .env     # then paste your API key into .env
+cp .env.example .env     # QWEN_API_KEY, QWEN_BASE_URL, KIMI_* placeholders
+uv sync --frozen
 ```
 
-`.env` is gitignored — keys never get committed.
+`.env` is gitignored. Run specs live under `yaml/` — see [`yaml/README.md`](yaml/README.md).
 
-## 1. Smoke test (run this first)
-
-Runs 2 instances end-to-end to verify the endpoint, config, and Docker setup:
+## Smoke test
 
 ```bash
-./run_smoke.sh
+./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
+./scripts/run.sh yaml/kimi/smoke.yaml smoke-kimi
 ```
 
-Success looks like: `results/smoke/preds.json` exists and each entry has a non-empty
-`model_patch`. Per-instance cost in the progress display should be small but **non-zero** —
-$0.00 means the pricing registry isn't being picked up.
+Success: `results/smoke-qwen/preds.json` with non-empty `model_patch` entries.
 
-## 2. Full run
+## Full run
 
 ```bash
-./run_full.sh
+./scripts/run.sh yaml/qwen/verified-full.yaml qwen-june
+./scripts/run.sh yaml/kimi/verified-full.yaml kimi-june
 ```
 
-- 500 instances, 4 parallel workers
-- Output: `results/verified-full/preds.json` (+ a trajectory dir per instance)
-- Expect this to take many hours; run it in tmux/screen or with `nohup`
+- 500 instances, 4 workers (from yaml `meta` / `benchmark`)
+- Output: `results/<RUN_NAME>/`
+- **Resume:** same yaml path + `RUN_NAME`
+- **Variants:** copy/edit files under `yaml/qwen/` or `yaml/kimi/`
 
-## Restarting / resuming
+Optional root shim: `./run.sh` → `scripts/run.sh`.
 
-**Resume is automatic.** Completed instances are recorded in `preds.json` and skipped on
-re-run. If the job dies, the machine reboots, or you Ctrl+C — just run the same script
-again and it continues where it left off.
-
-- Granularity is per-instance: anything mid-trajectory when killed restarts from scratch
-- One Ctrl+C = graceful (in-flight instances finish, pending ones cancel); twice = immediate
-- Force a full redo of everything: add `--redo-existing` to the `mini-extra` command
-- Redo specific instances: delete their entries from `preds.json` (or delete `preds.json`
-  for all) and re-run
-
-## Disk usage / image pruning
-
-Each instance pulls its own `x86_64` Docker image (~1.1GB compressed each, but layers
-are heavily shared — the full 500-instance set is ~50-80GB of download and ~120GB on
-disk). Containers self-clean; only images pile up.
-
-On a slow connection, front-load the downloads before kicking off a run:
+Agent progress is mostly in `results/<RUN_NAME>/minisweagent.log` (not every step on stdout):
 
 ```bash
-./prepull.sh        # pre-pull all 500 images (resumable; e.g. run overnight)
-./prepull.sh 25     # or just the first 25 (matches --slice '0:25')
+tail -f results/smoke-qwen/minisweagent.log
 ```
 
-**Default: images are kept across runs.** Nothing deletes an image unless you ask —
-prepull once, then run the agent and evaluation as many times as you like with zero
-re-downloads. When you're done with the box for good, reclaim disk with either:
+Set `benchmark.run_eval: false` in a yaml to skip the harness after the agent.
+
+## EC2 (cloud)
+
+From [`../cloud/`](../cloud/):
 
 ```bash
-CLEAN=True ./evaluate.sh results/verified-full   # cleanup during a final eval, or
-./prune_images.sh results/verified-full           # standalone sweep, no eval re-run
+./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
+./scripts/run-tmux.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1
 ```
 
-(`prune_images.sh` only removes images for instances already recorded in `preds.json`,
-so it's safe to run even while a run is in progress.)
+## Resuming
+
+Completed instances are in `preds.json` and skipped on re-run. Smoke yamls set `clean_start: true`
+(wipes preds on each smoke invocation). For a full run, re-run the same command after interrupt.
+
+## Disk / images
+
+```bash
+./scripts/prepull.sh        # all 500 images
+./scripts/prepull.sh 25     # first 25
+./scripts/prune_images.sh results/qwen-june
+```
+
+`CLEAN=True ./scripts/evaluate.sh results/qwen-june qwen-june` — eval with container cleanup.
 
 ## Configuration
 
 | What | Where |
-|---|---|
-| Model, base URL, API key | env vars / `.env` (defaults baked into scripts) |
-| Iterations per task (`step_limit: 250`), cost limit (disabled) | `model.yaml` |
-| Token pricing ($0.50/M in, $0.05/M cached in, $3.50/M out) | `litellm_registry.json` |
-| Agent parallelism = concurrent API requests (default 4) | `AGENT_WORKERS` env var |
-| Eval parallelism, local-only, no API traffic (default 4) | `EVAL_WORKERS` env var |
-| Dataset, output dir | flags in the scripts (`--subset`, `-o`) |
-| mini-swe-agent version (pinned: 2.3.0) | `MSWEA_VERSION` env var |
+|------|--------|
+| Run name | second arg → `results/<RUN_NAME>/` |
+| Full run definition | `yaml/qwen/*.yaml`, `yaml/kimi/*.yaml` |
+| Secrets | `.env` (`QWEN_*`, `KIMI_*`) |
+| Agent/model limits | `agent` / `model` in run-spec yaml |
+| Token pricing | `litellm_registry.json` |
 
-Handy one-off overrides (append to the `mini-extra` command):
+Hydration (`scripts/hydrate_run_yaml.py`) expands `${VAR}` in yaml from `.env` and writes
+`.run-cache/<RUN_NAME>/agent.yaml` for mini-swe-agent.
 
-```bash
--c agent.step_limit=50              # shorter runs while debugging
---filter 'django__django-11[0-9]+'  # only matching instance IDs
---slice '0:25'                      # first 25 instances
-```
+## Scoring
 
-If the endpoint ever rejects requests due to tool-call params, set
-`parallel_tool_calls: false` in `model.yaml`; if the model lacks tool-calling entirely,
-swap `-c swebench.yaml` for `-c swebench_backticks.yaml` in the scripts.
-
-## Scoring the run
-
-**Evaluation runs automatically** after the agent finishes in both `run_full.sh` and
-`run_smoke.sh`, with the same parallelism (`WORKERS`, default 4). Expect roughly 3-6h
-for the full 500. Both phases resume if interrupted — already-graded instances are
-skipped on re-run. To score manually — e.g. on partial results mid-run, or to
-re-print a scorecard:
+Eval runs automatically after the agent when `benchmark.run_eval` is true (default). Manual:
 
 ```bash
-./evaluate.sh                  # scores results/verified-full
-./evaluate.sh results/smoke    # scores the smoke run
+MODEL_LABEL=subconscious/tim-qwen3.6-27b ./scripts/evaluate.sh results/qwen-june qwen-june
 ```
 
-This runs the official SWE-bench evaluation harness (needs Docker — it replays each
-patch in its instance container and runs the tests), then prints a copy-pasteable
-markdown scorecard:
+## Other scripts
 
-```
-| Metric | Value |
-|---|---|
-| **Score (resolved / benchmark)** | **N/500 (XX.X%)** |
-| ...
-```
-
-The "Score" line is the leaderboard-comparable number (% Resolved). The full report
-json (with `resolved_ids`, `unresolved_ids`, etc. for digging into specific instances)
-is written next to `preds.json`. Works on partial runs too — it only evaluates
-what's in `preds.json` and shows a separate resolved/submitted line.
-
-Alternative without local Docker: [sb-cli](https://github.com/SWE-bench/sb-cli)
-evaluates in the cloud — `sb-cli submit swe-bench_verified test --predictions_path
-results/verified-full/preds.json --run_id verified-full`.
-
-## Timing report
-
-```bash
-./timings.sh results/verified-full
-```
-
-Read-only, run anytime (mid-run included): per-trace agent wall time (parsed from the
-timestamped `minisweagent.log`), whole-job wall time, and per-instance eval test
-runtimes once evaluation has run.
-
-## Debugging a bad instance
-
-Every step the agent took is in
-`results/<run>/<instance_id>/<instance_id>.traj.json` — the full conversation,
-commands, and outputs. Exit statuses across the run are summarized in
-`results/<run>/exit_statuses_*.yaml`.
+| Script | Purpose |
+|--------|---------|
+| `scripts/status.sh` | In-progress snapshot |
+| `scripts/timings.sh` | Wall-clock report |
+| `scripts/repro_runaway.sh` | Single-instance repro with trace proxy |

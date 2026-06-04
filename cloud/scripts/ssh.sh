@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=_common.sh
+source "$(dirname "$0")/_common.sh"
+require_aws
+exec ssh_cmd -t "cd $MINI_SWE_RUNS_PATH && exec bash -l"

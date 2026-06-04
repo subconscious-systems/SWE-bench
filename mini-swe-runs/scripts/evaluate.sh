@@ -3,15 +3,12 @@
 # print a shareable scorecard.
 #
 # Usage:
-#   ./evaluate.sh                          # evaluates results/verified-full
-#   ./evaluate.sh results/smoke            # evaluate the smoke run
-#   ./evaluate.sh results/verified-full myrun-v2   # custom run_id
-#
-# Needs Docker (the harness replays each patch in the instance's container and
-# runs the tests). Safe to re-run; also fine on partial runs — it only
-# evaluates instances present in preds.json.
+#   ./scripts/evaluate.sh [results_dir] [run_id]
 set -euo pipefail
-cd "$(dirname "$0")"
+MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$MSR_ROOT"
+
+ulimit -n 65536 2>/dev/null || echo "warn: could not raise fd limit (ulimit -n = $(ulimit -n))" >&2
 
 RESULTS_DIR="${1:-results/verified-full}"
 RUN_ID="${2:-$(basename "$RESULTS_DIR")}"
@@ -19,15 +16,9 @@ WORKERS="${WORKERS:-4}"
 
 [[ -f "$RESULTS_DIR/preds.json" ]] || { echo "error: no preds.json in $RESULTS_DIR" >&2; exit 1; }
 
-# Run from inside the results dir so the report json and logs/ land next to
-# the predictions instead of polluting the repo root.
 (
   cd "$RESULTS_DIR"
-  # Images are KEPT after grading by default so repeat runs/evals never
-  # re-download (~50-80GB for the full set). When you're done with the box
-  # for good, reclaim the disk with:  CLEAN=True ./evaluate.sh <results_dir>
-  # (or ./prune_images.sh <results_dir>, which doesn't re-run the eval).
-  uv run --no-project --with swebench python -m swebench.harness.run_evaluation \
+  uv run --directory "$MSR_ROOT" python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Verified --split test \
     --predictions_path preds.json \
     --max_workers "$WORKERS" \
@@ -38,17 +29,18 @@ WORKERS="${WORKERS:-4}"
 REPORT="$(ls -t "$RESULTS_DIR"/*."$RUN_ID".json 2>/dev/null | head -1)"
 [[ -n "$REPORT" ]] || { echo "error: report json not found in $RESULTS_DIR" >&2; exit 1; }
 
-python3 - "$REPORT" <<'EOF'
+uv run --directory "$MSR_ROOT" python - "$REPORT" <<'EOF'
 import json, sys
 
 path = sys.argv[1]
 r = json.load(open(path))
-total = r["total_instances"]          # full benchmark (500 for Verified)
-sub = r["submitted_instances"]        # instances in preds.json
+total = r["total_instances"]
+sub = r["submitted_instances"]
 res = r["resolved_instances"]
 
+label = __import__("os").environ.get("MODEL_LABEL", "subconscious/tim-qwen3.6-27b")
 print()
-print("## SWE-bench Verified — subconscious/tim-qwen3.6-27b")
+print(f"## SWE-bench Verified — {label}")
 print()
 print("| Metric | Value |")
 print("|---|---|")

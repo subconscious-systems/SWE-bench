@@ -19,7 +19,7 @@ whole instance. Instead we:
 Other API errors (5xx, connection resets) still retry as before — transient
 infra blips should not fail turns.
 
-Wired up via model.yaml:  model.model_class: turn_failure_model.TurnFailureModel
+Wired up via run-spec yaml: model.model_class: turn_failure_model.TurnFailureModel
 (run scripts put this directory on PYTHONPATH so uvx's python can import it).
 Both raised FormatErrors count against step_limit, and wall_time_limit_seconds
 still bounds the episode, so failure spirals stay bounded.

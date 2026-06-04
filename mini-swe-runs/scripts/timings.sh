@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# On-demand wall-clock report for a run: per-trace agent time, whole-job time,
-# and per-instance eval test runtime (if evaluation has run). Read-only —
-# gathers everything from the timestamped minisweagent.log and eval logs.
-#
-# Usage:  ./timings.sh [results_dir]      (default: results/verified-full)
+# Wall-clock report for a run (agent + eval if present).
+# Usage: ./scripts/timings.sh [results_dir]
 set -euo pipefail
-cd "$(dirname "$0")"
+MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$MSR_ROOT"
 
 RESULTS_DIR="${1:-results/verified-full}"
 [[ -f "$RESULTS_DIR/minisweagent.log" ]] || { echo "error: no minisweagent.log in $RESULTS_DIR" >&2; exit 1; }
@@ -22,7 +20,6 @@ start_re = re.compile(r"Starting container with command:.*sweb\.eval\.[^.]+\.(\S
 end_ok_re = re.compile(r"Saved trajectory to '.*/([^/]+)\.traj\.json'")
 end_err_re = re.compile(r"Error processing instance (\S+?):")
 
-# Collect per-instance event streams: (time, kind) with kind in start/ok/err.
 events, all_ts = {}, []
 for line in (results / "minisweagent.log").read_text().splitlines():
     m_ts = ts_re.match(line)
@@ -37,9 +34,6 @@ for line in (results / "minisweagent.log").read_text().splitlines():
     elif m := end_err_re.search(line):
         events.setdefault(m.group(1), []).append((t, "err"))
 
-# Pair each start with the end that follows it (resumed/redone instances have
-# several attempts). Report the last attempt that finished; note a trailing
-# unfinished attempt if one exists.
 rows = []
 for iid, evs in events.items():
     attempts, open_start = [], None
@@ -71,14 +65,10 @@ for iid, secs, status in sorted(rows, key=lambda r: r[1] or -1, reverse=True):
 if done:
     print(f"\ntraces: {len(done)} timed | median {statistics.median(done):.0f}s | "
           f"mean {statistics.mean(done):.0f}s | max {max(done):.0f}s")
-    print("(per-trace time includes image pull on first use; "
-          "traces run in parallel, so they sum to more than the job wall time)")
 if all_ts:
     job = (max(all_ts) - min(all_ts)).total_seconds()
-    print(f"whole agent job (first to last log line, incl. resumed sessions): "
-          f"{int(job//3600)}h{int(job%3600//60):02d}m{int(job%60):02d}s")
+    print(f"whole agent job: {int(job//3600)}h{int(job%3600//60):02d}m{int(job%60):02d}s")
 
-# Eval timing, if evaluation has run.
 eval_runtimes = {}
 for log in results.glob("logs/run_evaluation/*/*/*/run_instance.log"):
     if m := re.search(r"Test runtime: ([\d.]+) seconds", log.read_text()):
@@ -87,7 +77,5 @@ if eval_runtimes:
     total = sum(eval_runtimes.values())
     print(f"\n## Eval test runtime — {len(eval_runtimes)} instance(s), "
           f"median {statistics.median(eval_runtimes.values()):.0f}s, "
-          f"total {int(total//60)}m{int(total%60):02d}s (split across workers)")
-    for iid, secs in sorted(eval_runtimes.items(), key=lambda kv: -kv[1])[:10]:
-        print(f"  {iid}: {secs:.0f}s")
+          f"total {int(total//60)}m{int(total%60):02d}s")
 EOF

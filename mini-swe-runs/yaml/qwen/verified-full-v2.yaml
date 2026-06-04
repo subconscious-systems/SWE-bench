@@ -1,0 +1,42 @@
+# NOTE: original full run we did - results stored locally
+
+meta:
+  model_name: openai/subconscious/tim-qwen3.6-27b
+  model_label: subconscious/tim-qwen3.6-27b
+  agent_workers: 4
+  eval_workers: 4
+
+env:
+  OPENAI_API_KEY: ${QWEN_API_KEY}
+  MSWEA_API_KEY: ${QWEN_API_KEY}
+  MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT: "5"
+  MSWEA_COST_TRACKING: ignore_errors
+  LITELLM_MODEL_REGISTRY_PATH: ${MSR_ROOT}/litellm_registry.json
+  PYTHONPATH: ${MSR_ROOT}
+
+benchmark:
+  subset: verified
+  split: test
+  clean_start: false
+  redo_existing: false
+
+agent:
+  step_limit: 250
+  cost_limit: 0
+  wall_time_limit_seconds: 2400
+
+environment:
+  pull_timeout: 1800
+
+model:
+  model_class: turn_failure_model.TurnFailureModel
+  model_kwargs:
+    custom_llm_provider: openai
+    num_retries: 0
+    timeout: 320
+    max_tokens: 16384
+    temperature: 0.7
+    top_p: 0.95
+    drop_params: true
+    parallel_tool_calls: true
+    api_base: ${QWEN_BASE_URL}

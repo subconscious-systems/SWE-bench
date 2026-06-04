@@ -1,0 +1,18 @@
+[project]
+name = "mini-swe-runs"
+version = "0.0.0"
+description = "SWE-bench Verified runs via mini-swe-agent (pinned toolchain)"
+requires-python = ">=3.12"
+dependencies = [
+    "mini-swe-agent==2.3.0",
+    "datacurve-pier",
+    "swebench",
+    "datasets",
+    "pyyaml",
+    "python-dotenv",
+]
+
+[tool.uv.sources]
+# Target tag v2.1.0 (deep-swe Pier). Upstream has not published v2.1.0 yet; lock pins main@830ed6b.
+# When https://github.com/datacurve-ai/pier/releases/tag/v2.1.0 exists: switch to tag = "v2.1.0" and re-run uv lock.
+datacurve-pier = { git = "https://github.com/datacurve-ai/pier", rev = "830ed6b0177b05f282d2e8015b01b7395d19a6be" }
