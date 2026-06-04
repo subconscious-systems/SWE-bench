@@ -8,7 +8,8 @@ Infrastructure is defined in [`sst.config.ts`](sst.config.ts) ([SST Ion v3](http
 
 - Node.js 20+
 - [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) + [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-- AWS SSO configured in `~/.aws/config` with permission to deploy EC2, IAM, EBS, and `ssm:StartSession`
+- AWS SSO configured in `~/.aws/config` with permission to deploy EC2, IAM, EBS, `ssm:StartSession`, `ssm:SendCommand`, and `ec2-instance-connect:SendSSHPublicKey`
+- Local SSH key (`~/.ssh/id_ed25519` or `~/.ssh/id_rsa`) — used with EC2 Instance Connect for scp/rsync over SSM
 - `rsync`, `ssh`, `scp`, `uv` (for local lockfile work)
 
 ```bash
@@ -25,7 +26,8 @@ Every cloud script takes **`<stage>`** as its first argument. One stage = one EC
 
 ```bash
 cd cloud
-./scripts/deploy.sh qwen          # SST deploy → m6i.2xlarge + 300GB data volume
+./scripts/deploy.sh qwen          # SST deploy + wait for SSM
+./scripts/bootstrap.sh qwen       # Docker, uv, /data layout (idempotent)
 
 cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BASE_URL, …
 ./scripts/push-env.sh qwen
@@ -40,6 +42,7 @@ Kimi on a separate stack:
 
 ```bash
 ./scripts/deploy.sh kimi
+./scripts/bootstrap.sh kimi
 ./scripts/push-env.sh kimi
 ./scripts/sync.sh kimi --install
 ./scripts/run-tmux.sh kimi yaml/kimi/verified-full.yaml kimi-june
@@ -79,6 +82,45 @@ Pinned in [`../mini-swe-runs/pyproject.toml`](../mini-swe-runs/pyproject.toml) +
 
 Run scripts use `uv run` (not `uvx`). On the instance, `install-deps.sh` runs `uv sync --frozen`.
 
+## Bootstrap
+
+After `deploy.sh`, run [`./scripts/bootstrap.sh`](scripts/bootstrap.sh) `<stage>`. It runs [`user-data/bootstrap.sh`](user-data/bootstrap.sh) on the instance via SSM (Docker CE, uv, `/data` volume, `/opt/swe-bench` layout). Idempotent — safe to re-run.
+
+Verifies:
+
+- `docker info` works (root and `ubuntu` via `sg docker`)
+- `uv` is installed
+- `/opt/swe-bench` exists
+
+Logs on the instance: `/var/log/swe-bench-bootstrap.log`
+
+## Fresh deploy (destroy + recreate)
+
+Each **stage** has its own EC2 instance (`swe-bench-runner-<stage>`) and data EBS volume (`swe-bench-runner-<stage>-data`, 300 GiB by default). Destroying `qwen` does not touch `kimi`.
+
+```bash
+cd cloud
+./scripts/destroy.sh qwen        # remove stack; volume kept
+./scripts/destroy_data.sh qwen    # delete data volume (after stack is gone)
+./scripts/deploy.sh qwen         # new instance
+./scripts/bootstrap.sh qwen
+./scripts/push-env.sh qwen
+./scripts/sync.sh qwen --install
+```
+
+Full wipe in one go:
+
+```bash
+./scripts/destroy.sh qwen && ./scripts/destroy_data.sh qwen
+```
+
+Pause compute but keep the same instance and all data:
+
+```bash
+./scripts/stop.sh qwen           # no compute charge; ~$24/mo for volume
+./scripts/start.sh qwen          # resume when needed
+```
+
 ## Scripts
 
 All scripts: `./scripts/<name>.sh <stage> [...]`
@@ -86,13 +128,15 @@ All scripts: `./scripts/<name>.sh <stage> [...]`
 | Script | Purpose |
 |--------|---------|
 | `deploy.sh` | `sst deploy` + wait for SSM |
-| `destroy.sh` | `sst remove` (data volume is **protected**) |
-| `stop.sh` / `start.sh` | Stop/start EC2 (disk retained) |
+| `bootstrap.sh` | Instance setup via SSM (Docker, uv, `/data`) — run after deploy |
+| `destroy.sh` | `sst remove` — stack only; data volume retained |
+| `destroy_data.sh` | Delete `swe-bench-runner-<stage>-data` EBS volume (must be detached) |
+| `stop.sh` / `start.sh` | Stop/start EC2 (instance + disk retained; no compute charge while stopped) |
 | `push-env.sh` | Copy `mini-swe-runs/.env` to instance |
 | `sync.sh` | Rsync repo → `/opt/swe-bench` (`--install` → `install-deps.sh`) |
 | `install-deps.sh` | `uv sync --frozen` on EC2 |
-| `ssh.sh` | Interactive shell (SSM SSH proxy) |
-| `connect.sh` | SSM session (no SSH) |
+| `ssh.sh` | Interactive shell as **ubuntu** via SSH over SSM (used by rsync/scp) |
+| `connect.sh` | SSM shell as **ubuntu** (no SSH key; `sudo -iu ubuntu`) |
 | `run.sh` | `<yaml-path> <RUN_NAME>` → remote `mini-swe-runs/scripts/run.sh` (foreground) |
 | `run-tmux.sh` | Same args, detached tmux session (`TMUX_SESSION` overrides session name) |
 | `prepull.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
@@ -126,10 +170,11 @@ R2_PREFIX=swe-bench-runs
 
 | Action | Data on `/data`? |
 |--------|------------------|
-| EC2 **stop** / **start** | Yes |
+| EC2 **stop** / **start** | Yes (same instance, volume attached) |
 | `./scripts/stop.sh <stage>` | Yes |
-| Instance **terminate** | Data volume usually survives (`deleteOnTermination: false` on attach) |
-| `destroy.sh <stage>` | EBS volume **protected** — may remain in AWS; clean up manually if needed |
+| `./scripts/start.sh <stage>` | Yes — resumes the stopped instance |
+| `./scripts/destroy.sh <stage>` | Yes — volume detached but retained (~$24/mo) |
+| `./scripts/destroy_data.sh <stage>` | **No** — volume permanently deleted |
 
 ## Cost (us-east-1, on-demand)
 

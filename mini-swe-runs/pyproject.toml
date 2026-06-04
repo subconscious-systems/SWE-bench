@@ -16,3 +16,6 @@ dependencies = [
 # Target tag v2.1.0 (deep-swe Pier). Upstream has not published v2.1.0 yet; lock pins main@830ed6b.
 # When https://github.com/datacurve-ai/pier/releases/tag/v2.1.0 exists: switch to tag = "v2.1.0" and re-run uv lock.
 datacurve-pier = { git = "https://github.com/datacurve-ai/pier", rev = "830ed6b0177b05f282d2e8015b01b7395d19a6be" }
+
+[tool.uv]
+python-preference = "system"

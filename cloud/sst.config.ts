@@ -1,7 +1,5 @@
 /// <reference path="./.sst/platform/config.d.ts" />
 
-import { createRunner } from "./infra/runner";
-
 export default $config({
   app(input) {
     return {
@@ -17,6 +15,7 @@ export default $config({
     };
   },
   async run() {
+    const { createRunner } = await import("./infra/runner");
     return createRunner();
   },
 });

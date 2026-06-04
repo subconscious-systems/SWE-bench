@@ -9,5 +9,6 @@ shift
 require_aws
 
 echo "Running uv sync --frozen in $MINI_SWE_RUNS_PATH ..."
-remote_exec "cd '$MINI_SWE_RUNS_PATH' && uv sync --frozen"
+ensure_uv
+remote_exec "cd '$MINI_SWE_RUNS_PATH' && export PATH='/usr/local/bin:/home/ubuntu/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin' && uv sync --frozen --python 3.12"
 echo "Done. Use: uv run mini-extra, uv run pier (from $MINI_SWE_RUNS_PATH on the instance)"

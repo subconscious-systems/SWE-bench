@@ -17,9 +17,14 @@ npx sst deploy --stage "$STAGE"
 INSTANCE_ID="$(get_instance_id)"
 echo
 echo "Instance: $INSTANCE_ID"
-echo "Wait for SSM/SSH (bootstrap may take a few minutes on first boot)..."
-wait_for_ssm "$INSTANCE_ID" || true
+echo "Waiting for SSM ..."
+wait_for_ssm "$INSTANCE_ID"
+
 echo
-echo "Next:"
+echo "Stack deployed. Bootstrap the instance next:"
+echo "  ./scripts/bootstrap.sh $STAGE"
+echo
+echo "Then:"
 echo "  ./scripts/push-env.sh $STAGE"
 echo "  ./scripts/sync.sh $STAGE --install"
+echo "  ./scripts/run.sh $STAGE yaml/qwen/smoke.yaml smoke-qwen"

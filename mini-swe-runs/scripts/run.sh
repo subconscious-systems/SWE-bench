@@ -14,6 +14,9 @@ set -euo pipefail
 MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$MSR_ROOT"
 
+# Match EC2 (Ubuntu 3.12) and install-deps; avoid .python-version drift pulling 3.14.
+UV_RUN=(uv run --python 3.12)
+
 YAML_PATH="${1:-}"
 RUN_NAME="${2:-}"
 
@@ -24,7 +27,8 @@ RUN_NAME="${2:-}"
 
 [[ -f "$YAML_PATH" ]] || { echo "error: yaml not found: $YAML_PATH" >&2; exit 1; }
 
-eval "$(uv run python scripts/hydrate_run_yaml.py "$YAML_PATH" --bootstrap "$RUN_NAME")"
+eval "$("${UV_RUN[@]}" python scripts/hydrate_run_yaml.py "$YAML_PATH" --bootstrap "$RUN_NAME")"
+: "${OUTPUT_DIR:?hydrate failed — check .env and yaml variables}"
 
 echo "Run:     $RUN_NAME"
 echo "YAML:    $YAML_PATH"
@@ -42,7 +46,7 @@ fi
 # Unbuffered Python so INFO lines appear in the terminal promptly.
 export PYTHONUNBUFFERED=1
 
-uv run mini-extra swebench \
+"${UV_RUN[@]}" mini-extra swebench \
   --subset "$SUBSET" \
   --split "$SPLIT" \
   --workers "$AGENT_WORKERS" \

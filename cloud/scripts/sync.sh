@@ -22,8 +22,11 @@ done
 INSTANCE_ID="$(get_instance_id)"
 echo "Syncing $REPO_ROOT -> ${REMOTE_USER}@${INSTANCE_ID}:$REPO_PATH"
 
+ensure_runner_layout
+
 rsync_to_remote \
   --exclude '.git/' \
+  --exclude '.cursor/' \
   --exclude 'cloud/node_modules/' \
   --exclude 'cloud/.sst/' \
   --exclude 'mini-swe-runs/.env' \

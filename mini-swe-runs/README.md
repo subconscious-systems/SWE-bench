@@ -59,6 +59,7 @@ From [`../cloud/`](../cloud/) (see [`cloud/README.md`](../cloud/README.md) for f
 
 ```bash
 ./scripts/deploy.sh qwen
+./scripts/bootstrap.sh qwen
 ./scripts/push-env.sh qwen
 ./scripts/sync.sh qwen --install
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen

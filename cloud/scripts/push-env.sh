@@ -44,6 +44,7 @@ fi
 TMP="$(mktemp)"
 cp "$ENV_LOCAL" "$TMP"
 chmod 600 "$TMP"
+ensure_runner_layout
 scp_to_remote "$TMP" "$REMOTE_ENV"
 rm -f "$TMP"
 

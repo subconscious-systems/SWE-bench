@@ -7,4 +7,4 @@ cloud_parse_stage "$0" "$@"
 shift
 
 require_aws
-exec ssh_cmd -t "cd $MINI_SWE_RUNS_PATH && exec bash -l"
+ssh_interactive -t "cd $MINI_SWE_RUNS_PATH && exec bash -l"

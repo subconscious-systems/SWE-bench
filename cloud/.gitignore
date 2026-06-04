@@ -1,3 +1,5 @@
 node_modules/
 .sst/
+sst-env.d.ts
+.runner-known-hosts
 dist/

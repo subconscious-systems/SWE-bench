@@ -1,9 +1,3 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 export function createRunner() {
   const instanceType = process.env.INSTANCE_TYPE ?? "m6i.2xlarge";
   const dataVolumeSize = Number(process.env.DATA_VOLUME_GB ?? "300");
@@ -31,7 +25,7 @@ export function createRunner() {
   });
 
   const securityGroup = new aws.ec2.SecurityGroup("RunnerSG", {
-    description: "SWE-bench runner — egress only; access via SSM",
+    description: "SWE-bench runner - egress only; access via SSM",
     egress: [
       {
         protocol: "-1",
@@ -57,22 +51,12 @@ export function createRunner() {
     ],
   });
 
-  const bootstrapPath = join(__dirname, "..", "user-data", "bootstrap.sh");
-  const userData = readFileSync(bootstrapPath, "utf8");
-
-  const az = aws.ec2.getAvailabilityZonesOutput({ state: "available" }).names.apply(
-    (names) => names[0]!,
-  );
-
   const instance = new aws.ec2.Instance("Runner", {
     instanceType,
     ami: ami.id,
-    availabilityZone: az,
     iamInstanceProfile: instanceProfile.name,
     vpcSecurityGroupIds: [securityGroup.id],
     associatePublicIpAddress: true,
-    userData,
-    userDataReplaceOnChange: true,
     rootBlockDevice: {
       volumeSize: 100,
       volumeType: "gp3",
@@ -86,12 +70,15 @@ export function createRunner() {
   const dataVolume = new aws.ebs.Volume(
     "RunnerData",
     {
-      availabilityZone: az,
+      availabilityZone: instance.availabilityZone,
       size: dataVolumeSize,
       type: "gp3",
       encrypted: true,
+      tags: {
+        Name: `swe-bench-runner-${$app.stage}-data`,
+      },
     },
-    { protect: true },
+    { retainOnDelete: true },
   );
 
   const volumeAttachment = new aws.ec2.VolumeAttachment("RunnerDataAttach", {
