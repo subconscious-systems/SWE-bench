@@ -55,11 +55,14 @@ Set `benchmark.run_eval: false` in a yaml to skip the harness after the agent.
 
 ## EC2 (cloud)
 
-From [`../cloud/`](../cloud/):
+From [`../cloud/`](../cloud/) (see [`cloud/README.md`](../cloud/README.md) for full setup):
 
 ```bash
-./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
-./scripts/run-tmux.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1
+./scripts/deploy.sh qwen
+./scripts/push-env.sh qwen
+./scripts/sync.sh qwen --install
+./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
+./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 ```
 
 ## Resuming

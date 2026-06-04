@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Pull results from EC2 to local mini-swe-runs/results/
+#
+# Usage: ./scripts/pull-results.sh <stage> [run_dir] [--trajectories] [--logs]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
 
 RUN_DIR=""
 TRAJ=0

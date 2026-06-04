@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # Run a benchmark on EC2 (foreground). Same interface as mini-swe-runs/scripts/run.sh.
 #
-# Usage: ./scripts/run.sh <yaml-path> <RUN_NAME>
+# Usage: ./scripts/run.sh <stage> <yaml-path> <RUN_NAME>
 #
 # Examples:
-#   ./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
-#   ./scripts/run.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1
+#   ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
+#   ./scripts/run.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
+
 require_aws
 
 YAML_PATH="${1:-}"
 RUN_NAME="${2:-}"
 
 [[ -n "$YAML_PATH" && -n "$RUN_NAME" ]] || {
-  echo "usage: $0 <yaml-path> <RUN_NAME>" >&2
+  echo "usage: $0 <stage> <yaml-path> <RUN_NAME>" >&2
   exit 1
 }
 

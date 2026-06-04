@@ -5,7 +5,6 @@ set -euo pipefail
 _CLOUD_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLOUD_DIR="$(cd "$_CLOUD_SCRIPTS_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$CLOUD_DIR/.." && pwd)"
-STAGE="${STAGE:-dev}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 REMOTE_USER="${REMOTE_USER:-ubuntu}"
 REPO_PATH="${REPO_PATH:-/opt/swe-bench}"
@@ -14,13 +13,41 @@ MINI_SWE_RUNS_PATH="${MINI_SWE_RUNS_PATH:-$REPO_PATH/mini-swe-runs}"
 export AWS_REGION
 export AWS_DEFAULT_REGION="$AWS_REGION"
 
+cloud_stage_usage() {
+  local cmd="${1:-$0}"
+  echo "usage: $cmd <stage> ..." >&2
+  echo "  stage: SST stack name (e.g. qwen, kimi)" >&2
+}
+
+# Validate first positional arg as stage; sets and exports STAGE.
+cloud_parse_stage() {
+  local cmd="$1"
+  shift
+  if [[ $# -lt 1 || "$1" == -* ]]; then
+    cloud_stage_usage "$cmd"
+    exit 1
+  fi
+  STAGE="$1"
+  if [[ ! "$STAGE" =~ ^[a-zA-Z][a-zA-Z0-9-]*$ ]]; then
+    echo "error: invalid stage name: $STAGE" >&2
+    exit 1
+  fi
+  export STAGE
+}
+
+cloud_print_context() {
+  local account
+  account="$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo unknown)"
+  echo "stage=$STAGE region=$AWS_REGION account=$account"
+}
+
 require_aws() {
   if ! command -v aws >/dev/null 2>&1; then
     echo "error: aws CLI not found" >&2
     exit 1
   fi
   if ! aws sts get-caller-identity >/dev/null 2>&1; then
-    echo "error: AWS credentials not active (run: aws sso login --profile \"\${AWS_PROFILE:-default}\")" >&2
+    echo "error: AWS credentials not active (run: aws sso login)" >&2
     exit 1
   fi
 }
@@ -39,7 +66,7 @@ get_instance_id() {
     --query 'Reservations[0].Instances[0].InstanceId' \
     --output text 2>/dev/null || true)"
   if [[ -z "$id" || "$id" == "None" ]]; then
-    echo "error: no EC2 instance with tag Name=$name (deploy with ./scripts/deploy.sh?)" >&2
+    echo "error: no EC2 instance with tag Name=$name (deploy with ./scripts/deploy.sh <stage>?)" >&2
     exit 1
   fi
   echo "$id"

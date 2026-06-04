@@ -8,35 +8,47 @@ Infrastructure is defined in [`sst.config.ts`](sst.config.ts) ([SST Ion v3](http
 
 - Node.js 20+
 - [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) + [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-- AWS SSO profile with permission to deploy EC2, IAM, EBS, and `ssm:StartSession`
+- AWS SSO configured in `~/.aws/config` with permission to deploy EC2, IAM, EBS, and `ssm:StartSession`
 - `rsync`, `ssh`, `scp`, `uv` (for local lockfile work)
 
 ```bash
-export AWS_PROFILE=your-sso-profile
-export AWS_REGION=us-east-1
-aws sso login --profile "$AWS_PROFILE"
+aws sso login
 ```
+
+Region defaults to **us-east-1** in all cloud scripts. Credentials come from the AWS CLI default chain after SSO login.
+
+## Stages
+
+Every cloud script takes **`<stage>`** as its first argument. One stage = one EC2 stack, tagged `swe-bench-runner-<stage>` (e.g. `qwen`, `kimi`). Use separate stages to run Qwen and Kimi benchmarks on independent hosts.
 
 ## Quick start
 
 ```bash
 cd cloud
-./scripts/deploy.sh              # SST deploy → m6i.2xlarge + 300GB data volume
+./scripts/deploy.sh qwen          # SST deploy → m6i.2xlarge + 300GB data volume
 
 cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BASE_URL, …
-./scripts/push-env.sh
-./scripts/sync.sh --install      # rsync repo + uv sync --frozen on EC2
+./scripts/push-env.sh qwen
+./scripts/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
 
-./scripts/run.sh yaml/qwen/smoke.yaml smoke-qwen
-./scripts/run-tmux.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
-# Parallel: TMUX_SESSION=swebench-kimi ./scripts/run-tmux.sh yaml/kimi/verified-full.yaml kimi-june
-./scripts/summary.sh qwen-opt-v1
+./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
+./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
+./scripts/summary.sh qwen qwen-opt-v1
+```
+
+Kimi on a separate stack:
+
+```bash
+./scripts/deploy.sh kimi
+./scripts/push-env.sh kimi
+./scripts/sync.sh kimi --install
+./scripts/run-tmux.sh kimi yaml/kimi/verified-full.yaml kimi-june
 ```
 
 Attach to a running tmux job:
 
 ```bash
-./scripts/ssh.sh
+./scripts/ssh.sh qwen
 tmux attach -t swebench-qwen-opt-v1   # or your TMUX_SESSION / RUN_NAME
 tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 ```
@@ -49,11 +61,12 @@ tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 | Data volume | 300 GiB gp3 on `/data` |
 | AMI | Ubuntu 24.04 amd64 (Python 3.12) |
 | Repo on instance | `/opt/swe-bench` |
+| Region | `us-east-1` |
 
 Override at deploy time:
 
 ```bash
-INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=400 ./scripts/deploy.sh
+INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=400 ./scripts/deploy.sh qwen
 ```
 
 ## Python toolchain (`mini-swe-runs`)
@@ -67,6 +80,8 @@ Pinned in [`../mini-swe-runs/pyproject.toml`](../mini-swe-runs/pyproject.toml) +
 Run scripts use `uv run` (not `uvx`). On the instance, `install-deps.sh` runs `uv sync --frozen`.
 
 ## Scripts
+
+All scripts: `./scripts/<name>.sh <stage> [...]`
 
 | Script | Purpose |
 |--------|---------|
@@ -85,8 +100,6 @@ Run scripts use `uv run` (not `uvx`). On the instance, `install-deps.sh` runs `u
 | `pull-results.sh` | Rsync artifacts to laptop |
 | `upload-results.sh` | Zip on EC2 → optional R2 upload |
 
-Stage name defaults to `dev`: `STAGE=prod ./scripts/deploy.sh`
-
 ## Secrets (`.env`)
 
 Required for runs: `QWEN_API_KEY`, `QWEN_BASE_URL` (and `KIMI_*` for kimi yamls).
@@ -104,9 +117,9 @@ R2_PREFIX=swe-bench-runs
 ```
 
 ```bash
-./scripts/upload-results.sh verified-full-v2
-./scripts/upload-results.sh verified-full-v2 --trajectories
-./scripts/upload-results.sh smoke --local   # from laptop
+./scripts/upload-results.sh qwen verified-full-v2
+./scripts/upload-results.sh qwen verified-full-v2 --trajectories
+./scripts/upload-results.sh qwen smoke --local   # from laptop
 ```
 
 ## Persistence
@@ -114,9 +127,9 @@ R2_PREFIX=swe-bench-runs
 | Action | Data on `/data`? |
 |--------|------------------|
 | EC2 **stop** / **start** | Yes |
-| `./scripts/stop.sh` | Yes |
+| `./scripts/stop.sh <stage>` | Yes |
 | Instance **terminate** | Data volume usually survives (`deleteOnTermination: false` on attach) |
-| `destroy.sh` | EBS volume **protected** — may remain in AWS; clean up manually if needed |
+| `destroy.sh <stage>` | EBS volume **protected** — may remain in AWS; clean up manually if needed |
 
 ## Cost (us-east-1, on-demand)
 
@@ -126,7 +139,7 @@ R2_PREFIX=swe-bench-runs
 ## Debugging
 
 ```bash
-./scripts/ssh.sh
+./scripts/ssh.sh qwen
 cd /opt/swe-bench/mini-swe-runs
 ./scripts/status.sh results/qwen-june
 uv run pier --help
@@ -137,8 +150,9 @@ uv run pier --help
 
 ```bash
 cd cloud
-npx sst deploy --stage dev
-npx sst remove --stage dev
+export AWS_REGION=us-east-1
+npx sst deploy --stage qwen
+npx sst remove --stage qwen
 ```
 
 Outputs include `instanceId`, `instancePublicIp`, `dataVolumeId`, `repoPath`, `miniSweRunsPath`.

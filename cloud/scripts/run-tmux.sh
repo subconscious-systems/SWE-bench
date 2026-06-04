@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # Start a benchmark on EC2 in tmux (detached). Same args as run.sh.
 #
-# Usage: ./scripts/run-tmux.sh <yaml-path> <RUN_NAME>
+# Usage: ./scripts/run-tmux.sh <stage> <yaml-path> <RUN_NAME>
 #
 # Examples:
-#   ./scripts/run-tmux.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1
-#   TMUX_SESSION=swebench-qwen-opt ./scripts/run-tmux.sh yaml/qwen/optimized-v1.yaml qwen-opt-v1
+#   ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
+#   TMUX_SESSION=swebench-qwen-opt ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
+
 require_aws
 
 YAML_PATH="${1:-}"
 RUN_NAME="${2:-}"
 
 [[ -n "$YAML_PATH" && -n "$RUN_NAME" ]] || {
-  echo "usage: $0 <yaml-path> <RUN_NAME>" >&2
+  echo "usage: $0 <stage> <yaml-path> <RUN_NAME>" >&2
   exit 1
 }
 
@@ -28,4 +32,4 @@ remote_exec "cd '$MINI_SWE_RUNS_PATH' && \
   echo Started: $run_cmd && \
   echo 'tmux session:' '$SESSION' && \
   echo 'Log: tail -f' '$MINI_SWE_RUNS_PATH/results/$RUN_NAME/minisweagent.log' && \
-  echo 'Attach: ./scripts/ssh.sh  # tmux attach -t' '$SESSION'"
+  echo 'Attach: ./scripts/ssh.sh' '$STAGE' '# tmux attach -t' '$SESSION'"

@@ -101,7 +101,8 @@ def emit_bootstrap(loaded: dict[str, Any], run_name: str, msr_root: Path) -> Non
     for k, v in loaded["env"].items():
         print(_shell_export(k, v))
 
-    output_dir = msr_root / "results" / run_name
+    # Relative to MSR_ROOT so mini-extra and evaluate.sh behave under uv --directory.
+    output_dir = f"results/{run_name}"
     slice_val = bench.get("smoke_slice") or bench.get("slice") or ""
     slice_args = f"--slice {slice_val}" if slice_val else ""
     redo_args = "--redo-existing" if bench.get("redo_existing") else ""

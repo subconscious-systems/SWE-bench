@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
 # Rsync repo to EC2 (excludes .env, results, heavy dirs).
+#
+# Usage: ./scripts/sync.sh <stage> [--install]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
+
 require_aws
 
 INSTALL=0
 for arg in "$@"; do
   case "$arg" in
     --install) INSTALL=1 ;;
+    *) echo "unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
 
@@ -30,5 +37,5 @@ rsync_to_remote \
 
 echo "Sync complete."
 if [[ "$INSTALL" == "1" ]]; then
-  exec "$(dirname "$0")/install-deps.sh"
+  exec "$(dirname "$0")/install-deps.sh" "$STAGE"
 fi

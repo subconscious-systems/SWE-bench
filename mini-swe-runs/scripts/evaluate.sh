@@ -14,11 +14,21 @@ RESULTS_DIR="${1:-results/verified-full}"
 RUN_ID="${2:-$(basename "$RESULTS_DIR")}"
 WORKERS="${WORKERS:-4}"
 
-[[ -f "$RESULTS_DIR/preds.json" ]] || { echo "error: no preds.json in $RESULTS_DIR" >&2; exit 1; }
+# Resolve to absolute path (run.sh may pass OUTPUT_DIR as absolute from bootstrap).
+if [[ "$RESULTS_DIR" != /* ]]; then
+  RESULTS_DIR="$MSR_ROOT/$RESULTS_DIR"
+fi
+RESULTS_DIR="$(cd "$RESULTS_DIR" && pwd)"
+PREDS_JSON="$RESULTS_DIR/preds.json"
 
+[[ -f "$PREDS_JSON" ]] || { echo "error: no preds.json at $PREDS_JSON" >&2; exit 1; }
+
+# Harness writes the summary JSON and logs/run_evaluation/ relative to process cwd
+# (swebench --report_dir only mkdirs; it does not relocate the summary file).
+# Run from RESULTS_DIR so artifacts stay under results/<RUN_NAME>/.
 (
   cd "$RESULTS_DIR"
-  uv run --directory "$MSR_ROOT" python -m swebench.harness.run_evaluation \
+  uv run --project "$MSR_ROOT" python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Verified --split test \
     --predictions_path preds.json \
     --max_workers "$WORKERS" \

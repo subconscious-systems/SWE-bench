@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
+# Usage: ./scripts/summary.sh <stage> [run_dir]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
 
 RUN_DIR="${1:-verified-full-v2}"
 require_aws

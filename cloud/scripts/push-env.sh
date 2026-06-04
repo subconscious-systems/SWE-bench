@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
+# Usage: ./scripts/push-env.sh <stage> [--dry-run] [--diff]
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
 
 ENV_LOCAL="$REPO_ROOT/mini-swe-runs/.env"
 ENV_EXAMPLE="$REPO_ROOT/mini-swe-runs/.env.example"
@@ -12,6 +16,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --diff) DIFF_KEYS=1 ;;
+    *) echo "unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
 

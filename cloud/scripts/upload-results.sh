@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Zip a results directory and upload to Cloudflare R2.
+#
 # Usage:
-#   ./upload-results.sh verified-full-v2
-#   ./upload-results.sh verified-full-v2 --trajectories
-#   ./upload-results.sh verified-full-v2 --local
+#   ./scripts/upload-results.sh <stage> [run_dir]
+#   ./scripts/upload-results.sh <stage> [run_dir] --trajectories
+#   ./scripts/upload-results.sh <stage> [run_dir] --local
 set -euo pipefail
 # shellcheck source=_common.sh
 source "$(dirname "$0")/_common.sh"
+
+cloud_parse_stage "$0" "$@"
+shift
 
 RUN_DIR=""
 LOCAL=0
