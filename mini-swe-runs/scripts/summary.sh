@@ -24,7 +24,7 @@ REPORT="$(ls -t ./*.*.json 2>/dev/null | head -1 || true)"
 if [[ -n "$REPORT" && -f "$REPORT" ]]; then
   echo
   echo "--- Scorecard ---"
-  uv run --project "$MSR_ROOT" --python 3.12 python - "$REPORT" <<'PY'
+  uv run --project "$MSR_ROOT" python - "$REPORT" <<'PY'
 import json, sys
 path = sys.argv[1]
 r = json.load(open(path))

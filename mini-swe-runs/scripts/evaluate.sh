@@ -25,7 +25,7 @@ PREDS_JSON="$RESULTS_DIR/preds.json"
 # Run from RESULTS_DIR so artifacts stay under results/<RUN_NAME>/.
 (
   cd "$RESULTS_DIR"
-  uv run --project "$MSR_ROOT" --python 3.12 python -m swebench.harness.run_evaluation \
+  uv run --project "$MSR_ROOT" python -m swebench.harness.run_evaluation \
     --dataset_name princeton-nlp/SWE-bench_Verified --split test \
     --predictions_path preds.json \
     --max_workers "$WORKERS" \
@@ -36,7 +36,7 @@ PREDS_JSON="$RESULTS_DIR/preds.json"
 REPORT="$(ls -t "$RESULTS_DIR"/*."$RUN_ID".json 2>/dev/null | head -1)"
 [[ -n "$REPORT" ]] || { echo "error: report json not found in $RESULTS_DIR" >&2; exit 1; }
 
-uv run --directory "$MSR_ROOT" --python 3.12 python - "$REPORT" <<'EOF'
+uv run --directory "$MSR_ROOT" python - "$REPORT" <<'EOF'
 import json, sys
 
 path = sys.argv[1]

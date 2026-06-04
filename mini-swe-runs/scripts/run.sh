@@ -14,8 +14,8 @@ set -euo pipefail
 MSR_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$MSR_ROOT"
 
-# Match EC2 (Ubuntu 3.12) and install-deps; avoid .python-version drift pulling 3.14.
-UV_RUN=(uv run --python 3.12)
+# Pinned via .python-version + [tool.uv] only-managed (same major as EC2 install-deps).
+UV_RUN=(uv run)
 
 YAML_PATH="${1:-}"
 RUN_NAME="${2:-}"

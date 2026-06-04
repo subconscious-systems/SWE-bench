@@ -5,7 +5,7 @@ against the Subconscious endpoint using the [mini-swe-agent](https://mini-swe-ag
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) — scripts use `uv run` with a pinned lockfile
+- [uv](https://docs.astral.sh/uv/) — installs and runs **Python 3.12** via uv (not pyenv/system shims)
 - Docker, running — each instance executes in its own container
 - API keys in `.env` (see `.env.example`)
 
@@ -14,11 +14,17 @@ against the Subconscious endpoint using the [mini-swe-agent](https://mini-swe-ag
 
 ## Setup
 
+Python is **uv-managed** (`python-preference = only-managed` in `pyproject.toml`). Do not rely on pyenv for this project.
+
 ```bash
 cd mini-swe-runs
 cp .env.example .env     # QWEN_API_KEY, QWEN_BASE_URL, KIMI_* placeholders
-uv sync --frozen
+uv python install 3.12   # once per machine (uv downloads a full CPython with lzma, ssl, …)
+uv sync --frozen         # creates .venv from uv.lock + .python-version
+uv run python -c "import lzma; print('ok')"   # sanity check
 ```
+
+If you previously used pyenv here, remove the old venv first: `rm -rf .venv && uv sync --frozen`.
 
 `.env` is gitignored. Run specs live under `yaml/` — see [`yaml/README.md`](yaml/README.md).
 

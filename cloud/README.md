@@ -80,7 +80,7 @@ Pinned in [`../mini-swe-runs/pyproject.toml`](../mini-swe-runs/pyproject.toml) +
 - `datacurve-pier` from GitHub (target tag **v2.1.0**; lock currently pins `main@830ed6b` until upstream publishes the tag — re-run `uv lock` after `v2.1.0` exists)
 - `swebench`, `datasets`
 
-Run scripts use `uv run` (not `uvx`). On the instance, `install-deps.sh` runs `uv sync --frozen`.
+Run scripts use `uv run` (not `uvx`). Python **3.12** is uv-managed (`python-preference = only-managed` in `mini-swe-runs/pyproject.toml`) — not pyenv. On the instance, `install-deps.sh` runs `uv sync --frozen` (uv installs CPython if needed).
 
 ## Bootstrap
 

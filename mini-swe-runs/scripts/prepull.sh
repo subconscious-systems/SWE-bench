@@ -7,7 +7,7 @@ cd "$MSR_ROOT"
 
 N="${1:-0}"
 
-uv run --python 3.12 python - "$N" <<'EOF' | xargs -P 2 -n 1 docker pull
+uv run python - "$N" <<'EOF' | xargs -P 2 -n 1 docker pull
 import sys
 from datasets import load_dataset
 

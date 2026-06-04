@@ -18,4 +18,5 @@ dependencies = [
 datacurve-pier = { git = "https://github.com/datacurve-ai/pier", rev = "830ed6b0177b05f282d2e8015b01b7395d19a6be" }
 
 [tool.uv]
-python-preference = "system"
+# Use uv-managed CPython (not pyenv/system shims). Avoids broken system builds missing _lzma.
+python-preference = "only-managed"

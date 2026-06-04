@@ -38,5 +38,7 @@ model:
     temperature: 1.0
     top_p: 0.95
     drop_params: true
+    dp_size: 4
+    enable_dp_attention: true
     parallel_tool_calls: true
     api_base: ${KIMI_BASE_URL}
