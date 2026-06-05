@@ -34,5 +34,23 @@
     "input_cost_per_token": 3e-7,
     "cache_read_input_token_cost": 1.5e-7,
     "output_cost_per_token": 3e-6
+  },
+  "openai/subconscious/tim-qwen3.5-35b-a3b": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
+  },
+  "subconscious/tim-qwen3.5-35b-a3b": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
+  },
+  "tim-qwen3.5-35b-a3b": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
   }
 }

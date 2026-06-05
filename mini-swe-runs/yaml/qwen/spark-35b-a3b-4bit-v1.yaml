@@ -1,0 +1,44 @@
+# Spark 4-bit (llama.cpp chat-completions): Qwen 3.5 35B-A3B MoE, ~90 tok/s effective.
+# Tuning: 16k max_tokens (~3 min at 90/s), 200s turn timeout, ~27 min wall clock.
+
+meta:
+  model_name: openai/subconscious/tim-qwen3.5-35b-a3b
+  model_label: subconscious/tim-qwen3.5-35b-a3b
+  agent_workers: 1
+  eval_workers: 4
+
+env:
+  OPENAI_API_KEY: ${SPARK_API_KEY}
+  MSWEA_API_KEY: ${SPARK_API_KEY}
+  MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT: "5"
+  MSWEA_COST_TRACKING: ignore_errors
+  LITELLM_MODEL_REGISTRY_PATH: ${MSR_ROOT}/litellm_registry.json
+  PYTHONPATH: ${MSR_ROOT}
+
+benchmark:
+  subset: verified
+  split: test
+  clean_start: false
+  redo_existing: false
+
+agent:
+  step_limit: 750
+  cost_limit: 0
+  wall_time_limit_seconds: 1600
+
+environment:
+  pull_timeout: 1800
+
+model:
+  model_class: turn_failure_model.TurnFailureModel
+  model_kwargs:
+    custom_llm_provider: openai
+    num_retries: 0
+    timeout: 200
+    max_tokens: 16384
+    temperature: 1.0
+    top_p: 0.95
+    drop_params: true
+    parallel_tool_calls: true
+    # st_buffer_size: 5  # for brantree.cpp, this is a server spin up flag
+    api_base: ${SPARK_BASE_URL}
