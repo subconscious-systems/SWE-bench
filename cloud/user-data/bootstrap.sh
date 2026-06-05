@@ -104,19 +104,61 @@ path = "/etc/docker/daemon.json"
 root = sys.argv[1]
 try:
     data = json.load(open(path))
-except FileNotFoundError:
+except (FileNotFoundError, json.JSONDecodeError):
     data = {}
-except json.JSONDecodeError:
-    data = {}
-if data.get("data-root") == root:
+desired = {
+    "data-root": root,
+    # SWE-bench test runs can emit GBs of stdout; cap per-container logs.
+    "log-driver": "json-file",
+    "log-opts": {"max-size": "50m", "max-file": "2"},
+    # Eval-image builds accumulate cache; let the builder GC it.
+    "builder": {"gc": {"enabled": True, "defaultKeepStorage": "40GB"}},
+}
+if all(data.get(k) == v for k, v in desired.items()):
     raise SystemExit(0)
-data["data-root"] = root
+data.update(desired)
 open(path, "w").write(json.dumps(data, indent=2) + "\n")
 print("updated", path)
 PY
   then
-    log "docker daemon.json data-root=$DOCKER_DATA_ROOT"
+    log "docker daemon.json: data-root=$DOCKER_DATA_ROOT, log caps, builder gc"
   fi
+}
+
+configure_systemd_hardening() {
+  # Docker/containerd must never start without /data: image stores live there,
+  # and a missed mount would silently fill the root disk instead.
+  local unit
+  for unit in docker containerd; do
+    mkdir -p "/etc/systemd/system/${unit}.service.d"
+    cat >"/etc/systemd/system/${unit}.service.d/data-mount.conf" <<'EOF'
+[Unit]
+RequiresMountsFor=/data
+EOF
+  done
+
+  # Keep the remote-access lifelines alive under memory pressure so the box
+  # stays reachable even if an eval run goes pathological.
+  for unit in amazon-ssm-agent.service snap.amazon-ssm-agent.amazon-ssm-agent.service ssh.service; do
+    if systemctl list-unit-files "$unit" --no-legend 2>/dev/null | grep -q .; then
+      mkdir -p "/etc/systemd/system/${unit}.d"
+      cat >"/etc/systemd/system/${unit}.d/survival.conf" <<'EOF'
+[Service]
+OOMScoreAdjust=-1000
+EOF
+    fi
+  done
+
+  # Cap journald so logs cannot eat the root disk.
+  mkdir -p /etc/systemd/journald.conf.d
+  cat >/etc/systemd/journald.conf.d/cap.conf <<'EOF'
+[Journal]
+SystemMaxUse=1G
+EOF
+
+  systemctl daemon-reload
+  systemctl restart systemd-journald 2>/dev/null || true
+  log "systemd hardening: RequiresMountsFor=/data, ssm/ssh OOM protection, journald cap"
 }
 
 link_docker_data_root() {
@@ -214,45 +256,43 @@ wait_for_data_volume() {
     done
     sleep 5
   done
-  log "warn: no data volume after 5m — using root for docker/repo paths"
+  log "error: no data volume after 5m"
   return 1
 }
 
-DATA_DEV=""
-if DATA_DEV="$(wait_for_data_volume)"; then
-  if ! blkid "$DATA_DEV" | grep -q ext4; then
-    log "format $DATA_DEV"
-    mkfs.ext4 -F "$DATA_DEV"
-  fi
-  mkdir -p /data
-  if ! grep -q ' /data ' /etc/fstab; then
-    UUID=$(blkid -s UUID -o value "$DATA_DEV")
-    echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
-  fi
-  mount -a || mount "$DATA_DEV" /data
-  mkdir -p "$DOCKER_DATA_ROOT" "$CONTAINERD_ROOT" /data/swe-bench /data/tmp
-  chown -R ubuntu:ubuntu /data
+DATA_DEV="$(wait_for_data_volume)" || {
+  log "error: data volume required — aborting bootstrap"
+  exit 1
+}
 
-  configure_docker_daemon
-  link_docker_data_root
-  configure_containerd_on_data
-
-  if [[ ! -e /opt/swe-bench ]]; then
-    ln -sfn /data/swe-bench /opt/swe-bench
-  elif [[ -d /opt/swe-bench && ! -L /opt/swe-bench ]]; then
-    log "replace root-owned /opt/swe-bench with symlink to /data/swe-bench"
-    rm -rf /opt/swe-bench
-    ln -sfn /data/swe-bench /opt/swe-bench
-  fi
-  chown -h ubuntu:ubuntu /opt/swe-bench 2>/dev/null || true
-
-  verify_storage_layout
-else
-  log "WARN: no /data volume — full SWE-bench Verified runs need the data EBS volume"
-  mkdir -p /opt/swe-bench
-  chown -R ubuntu:ubuntu /opt/swe-bench
-  start_docker_stack
+if ! blkid "$DATA_DEV" | grep -q ext4; then
+  log "format $DATA_DEV"
+  mkfs.ext4 -F "$DATA_DEV"
 fi
+mkdir -p /data
+if ! grep -q ' /data ' /etc/fstab; then
+  UUID=$(blkid -s UUID -o value "$DATA_DEV")
+  echo "UUID=$UUID /data ext4 defaults,nofail 0 2" >> /etc/fstab
+fi
+mount -a || mount "$DATA_DEV" /data
+mkdir -p "$DOCKER_DATA_ROOT" "$CONTAINERD_ROOT" /data/swe-bench /data/tmp
+chown -R ubuntu:ubuntu /data
+
+configure_systemd_hardening
+configure_docker_daemon
+link_docker_data_root
+configure_containerd_on_data
+
+if [[ ! -e /opt/swe-bench ]]; then
+  ln -sfn /data/swe-bench /opt/swe-bench
+elif [[ -d /opt/swe-bench && ! -L /opt/swe-bench ]]; then
+  log "replace root-owned /opt/swe-bench with symlink to /data/swe-bench"
+  rm -rf /opt/swe-bench
+  ln -sfn /data/swe-bench /opt/swe-bench
+fi
+chown -h ubuntu:ubuntu /opt/swe-bench 2>/dev/null || true
+
+verify_storage_layout
 
 mkdir -p /opt/swe-bench/mini-swe-runs
 chown -R ubuntu:ubuntu /opt/swe-bench 2>/dev/null || chown -h ubuntu:ubuntu /opt/swe-bench 2>/dev/null || true
