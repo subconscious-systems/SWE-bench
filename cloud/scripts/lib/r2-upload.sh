@@ -27,12 +27,15 @@ done
 
 [[ -f "$LOCAL_PATH" ]] || { echo "error: file not found: $LOCAL_PATH" >&2; exit 1; }
 
+r2_ensure_tools
 r2_load_env
 r2_confirm_overwrite "$OBJECT_KEY" "$FORCE"
 
+zip_size="$(du -h "$LOCAL_PATH" | cut -f1)"
+echo "uploading $zip_size -> $(r2_s3_uri "$OBJECT_KEY") ..."
+
 aws s3 cp "$LOCAL_PATH" "$(r2_s3_uri "$OBJECT_KEY")" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --only-show-errors
+  --endpoint-url "$R2_ENDPOINT"
 
 echo "uploaded $(r2_s3_uri "$OBJECT_KEY")"
 

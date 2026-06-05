@@ -94,10 +94,14 @@ REMOTE_ZIP="/data/tmp/$ZIP_NAME"
 
 remote_exec "set -euo pipefail
 cd '$MINI_SWE_RUNS_PATH'
+echo 'restore-results: RUN_NAME=$RUN_NAME'
+echo '[1/2] downloading from R2 ...'
 source '$REPO_PATH/cloud/scripts/lib/r2-common.sh'
+r2_ensure_tools
 r2_load_env .env
 bash '$REPO_PATH/cloud/scripts/lib/r2-download.sh' \"\$(r2_object_key '$RUN_NAME')\" '$REMOTE_ZIP'
 
+echo '[2/2] unzipping into results/ ...'
 RUN_DIR='$REMOTE_RESULTS_PARENT/$RUN_NAME'
 if [[ -d \"\$RUN_DIR\" ]] && [[ '$FORCE' != '1' ]]; then
   echo 'warning: results directory already exists: '\$RUN_DIR >&2

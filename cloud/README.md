@@ -158,7 +158,7 @@ Infra: `./infra/<name>.sh <stage> [...]` — provision and operate the host.
 | `destroy.sh` | `sst remove` — deletes stack **and** data EBS volume (destructive) |
 | `stop.sh` / `start.sh` | Stop/start EC2 (instance + disk retained; no compute charge while stopped) |
 | `push-env.sh` | Copy `mini-swe-runs/.env` to instance |
-| `sync.sh` | Rsync repo → `/opt/swe-bench` (`--install` → `install-deps.sh`) |
+| `sync.sh` | Rsync repo → `/opt/swe-bench` (`--install` → `install-deps.sh`; `--fullsync` → enable `--delete`) |
 | `install-deps.sh` | `uv sync --frozen` on EC2 |
 | `ssh.sh` | Interactive shell as **ubuntu** via SSH over SSM (used by rsync/scp) |
 | `connect.sh` | SSM shell as **ubuntu** (no SSH key; `sudo -iu ubuntu`) |
@@ -205,7 +205,7 @@ R2_PREFIX=swe-bench-runs
 
 R2 object key (stable, per run name): `{R2_PREFIX}/{RUN_NAME}/swe-bench-{RUN_NAME}.zip`. The zip mirrors the local `results/<RUN_NAME>/` tree; restore unzips into `results/` so paths match exactly.
 
-Remote upload/restore use the AWS CLI with R2 credentials from `.env` (not the instance IAM role). Install once on the instance if needed: `sudo apt-get install -y awscli`.
+Remote upload/restore use **AWS CLI v2** with R2 credentials from `.env` (not the instance IAM role). Bootstrap installs it automatically; upload/restore will install it on first use if missing (`cloud/scripts/lib/install-aws-cli.sh`).
 
 ## Persistence
 

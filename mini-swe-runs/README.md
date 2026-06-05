@@ -139,4 +139,5 @@ Scripts that take a run use **`RUN_NAME`** only (e.g. `smoke-qwen`), not `result
 | `scripts/docker_storage.sh` | Containerd/Docker paths and disk headroom |
 | `scripts/prepull.sh` | Pre-pull eval images (pre-flight storage check) |
 | `scripts/prune_images.sh` | Drop Docker images for completed instances |
+| `scripts/salvage_preds.sh` | Rebuild `preds.json` from trajectories (only if preds missing) |
 | `scripts/repro_runaway.sh` | Single-instance repro with trace proxy |

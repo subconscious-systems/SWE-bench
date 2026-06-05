@@ -38,9 +38,14 @@ fi
 mkdir -p "$(dirname "$OUTPUT_ZIP")"
 rm -f "$OUTPUT_ZIP"
 
+file_count="$(find "$RUN_DIR" -type f 2>/dev/null | wc -l | tr -d ' ')"
+dir_size="$(du -sh "$RUN_DIR" 2>/dev/null | cut -f1)"
+echo "zipping $RUN_NAME/ ($file_count files, $dir_size) ..."
+
 (
   cd "$RESULTS_PARENT"
-  zip -qr "$OUTPUT_ZIP" "$RUN_NAME/"
+  # List entries as they are added (progress over slow / large trees).
+  zip -r "$OUTPUT_ZIP" "$RUN_NAME/"
 )
 
 echo "created $OUTPUT_ZIP ($(du -h "$OUTPUT_ZIP" | cut -f1))"

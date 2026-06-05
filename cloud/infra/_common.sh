@@ -185,13 +185,19 @@ push_ec2_ssh_key() {
 }
 
 # Ensure /opt/swe-bench -> /data/swe-bench is writable by ubuntu (fixes bootstrap race / root-owned /opt).
+# Only touch /data/swe-bench and /data/tmp — never chown -R /data (containerd/results are huge).
 ensure_runner_layout() {
   ssh_cmd "bash -s" "$REPO_PATH" "$MINI_SWE_RUNS_PATH" <<'REMOTE'
 set -euo pipefail
 repo="$1"
 msr="$2"
-sudo mkdir -p /data/swe-bench /data/docker /data/containerd /data/tmp
-sudo chown -R ubuntu:ubuntu /data
+sudo mkdir -p /data/swe-bench /data/tmp
+sudo chown ubuntu:ubuntu /data/tmp
+if [[ "$(stat -c '%U' /data/swe-bench 2>/dev/null || echo root)" != ubuntu ]]; then
+  sudo chown -R ubuntu:ubuntu /data/swe-bench
+else
+  sudo chown ubuntu:ubuntu /data/swe-bench
+fi
 if [[ -d "$repo" && ! -L "$repo" ]]; then
   sudo rm -rf "$repo"
 fi
@@ -282,13 +288,16 @@ scp_to_remote() {
 }
 
 rsync_to_remote() {
-  local instance_id
+  local instance_id ssh_e
   instance_id="$(get_instance_id)"
   push_ec2_ssh_key "$instance_id"
   resolve_ssh_key
-  rsync -az --delete \
-    -e "ssh -i ${CLOUD_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${CLOUD_KNOWN_HOSTS} -o GlobalKnownHostsFile=/dev/null -o LogLevel=QUIET -o ProxyCommand='$(ssh_proxy_cmd "$instance_id")'" \
-    "$@"
+  ssh_e="ssh -i ${CLOUD_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=${CLOUD_KNOWN_HOSTS} -o GlobalKnownHostsFile=/dev/null -o LogLevel=QUIET -o ProxyCommand='$(ssh_proxy_cmd "$instance_id")'"
+  if [[ "${CLOUD_RSYNC_DELETE:-0}" == "1" ]]; then
+    rsync -az --delete -e "$ssh_e" "$@"
+  else
+    rsync -az -e "$ssh_e" "$@"
+  fi
 }
 
 rsync_from_remote() {

@@ -232,6 +232,22 @@ if ! command -v uv >/dev/null 2>&1 && [[ ! -x /usr/local/bin/uv ]]; then
   curl -fsSL https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 fi
 
+log "aws cli v2 (R2 upload/restore)"
+if ! command -v aws >/dev/null 2>&1; then
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64) aws_arch=x86_64 ;;
+    aarch64|arm64) aws_arch=aarch64 ;;
+    *) log "error: unsupported arch for aws cli: $arch"; exit 1 ;;
+  esac
+  aws_tmp="$(mktemp -d)"
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${aws_arch}.zip" -o "$aws_tmp/awscliv2.zip"
+  unzip -q "$aws_tmp/awscliv2.zip" -d "$aws_tmp"
+  "$aws_tmp/aws/install" -i /usr/local/aws-cli -b /usr/local/bin --update
+  rm -rf "$aws_tmp"
+fi
+log "aws $(aws --version 2>&1 | head -1)"
+
 if systemctl list-unit-files amazon-ssm-agent.service &>/dev/null; then
   systemctl enable --now amazon-ssm-agent || true
 fi

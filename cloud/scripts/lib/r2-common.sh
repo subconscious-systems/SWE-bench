@@ -2,6 +2,31 @@
 # Shared Cloudflare R2 helpers. Source only; do not execute directly.
 set -euo pipefail
 
+_R2_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+r2_ensure_tools() {
+  if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+    echo "error: zip/unzip not found; run ./infra/bootstrap.sh <stage>" >&2
+    exit 1
+  fi
+  if command -v aws >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "$_R2_LIB_DIR/install-aws-cli.sh" ]]; then
+    echo "AWS CLI not found; installing v2 ..."
+    if [[ "$(id -u)" -eq 0 ]]; then
+      bash "$_R2_LIB_DIR/install-aws-cli.sh"
+    elif command -v sudo >/dev/null 2>&1; then
+      sudo bash "$_R2_LIB_DIR/install-aws-cli.sh"
+    else
+      bash "$_R2_LIB_DIR/install-aws-cli.sh"
+    fi
+    return 0
+  fi
+  echo "error: aws cli not found; run ./infra/bootstrap.sh <stage>" >&2
+  exit 1
+}
+
 r2_load_env() {
   local env_file="${1:-}"
   if [[ -z "$env_file" ]]; then

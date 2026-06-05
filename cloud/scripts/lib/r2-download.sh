@@ -17,13 +17,14 @@ fi
 OBJECT_KEY="$1"
 LOCAL_PATH="$2"
 
+r2_ensure_tools
 r2_load_env
 
 mkdir -p "$(dirname "$LOCAL_PATH")"
 
+echo "downloading $(r2_s3_uri "$OBJECT_KEY") ..."
 if ! aws s3 cp "$(r2_s3_uri "$OBJECT_KEY")" "$LOCAL_PATH" \
-  --endpoint-url "$R2_ENDPOINT" \
-  --only-show-errors 2>/dev/null; then
+  --endpoint-url "$R2_ENDPOINT"; then
   echo "error: object not found: $(r2_s3_uri "$OBJECT_KEY")" >&2
   echo "  check RUN_NAME, R2_PREFIX, and R2_BUCKET in .env" >&2
   exit 1

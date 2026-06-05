@@ -36,10 +36,14 @@ ZIP_NAME="swe-bench-${RUN_NAME}.zip"
 FORCE_FLAG=""
 [[ "$FORCE" == "1" ]] && FORCE_FLAG="--force"
 
+echo "upload-results: RUN_NAME=$RUN_NAME"
+
 if [[ "$LOCAL" == "1" ]]; then
   RESULTS_PARENT="$REPO_ROOT/mini-swe-runs/results"
   ZIP="/tmp/$ZIP_NAME"
+  echo "[1/2] zipping results/$RUN_NAME/ ..."
   bash "$LIB/zip-results.sh" "$RESULTS_PARENT" "$RUN_NAME" "$ZIP"
+  echo "[2/2] uploading to R2 ..."
   (
     cd "$REPO_ROOT/mini-swe-runs"
     # shellcheck source=lib/r2-common.sh
@@ -60,8 +64,12 @@ FORCE_REMOTE=""
 
 remote_exec "set -euo pipefail
 cd '$MINI_SWE_RUNS_PATH'
+echo 'upload-results: RUN_NAME=$RUN_NAME'
+echo '[1/2] zipping results/$RUN_NAME/ ...'
 bash '$REPO_PATH/cloud/scripts/lib/zip-results.sh' 'results' '$RUN_NAME' '$REMOTE_ZIP'
+echo '[2/2] uploading to R2 ...'
 source '$REPO_PATH/cloud/scripts/lib/r2-common.sh'
+r2_ensure_tools
 r2_load_env .env
 bash '$REPO_PATH/cloud/scripts/lib/r2-upload.sh' '$REMOTE_ZIP' \"\$(r2_object_key '$RUN_NAME')\" $FORCE_REMOTE
 rm -f '$REMOTE_ZIP'
