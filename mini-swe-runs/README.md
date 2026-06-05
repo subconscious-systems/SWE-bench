@@ -80,15 +80,22 @@ From [`../cloud/`](../cloud/) (see [`cloud/README.md`](../cloud/README.md) for f
 Completed instances are in `preds.json` and skipped on re-run. Smoke yamls set `clean_start: true`
 (wipes preds on each smoke invocation). For a full run, re-run the same command after interrupt.
 
+On EC2, archive and restore the full `results/<RUN_NAME>/` tree via R2 (see [`cloud/README.md`](../cloud/README.md)):
+
+```bash
+./scripts/upload-results.sh <stage> <RUN_NAME>    # zip mirror → R2
+./scripts/restore-results.sh <stage> <RUN_NAME>   # R2 → results/<RUN_NAME>/ (fresh instance)
+```
+
 ## Disk / images
 
-On EC2, bootstrap stores image layers under **`/data/containerd`** (containerd snapshotter), not `/var/lib/docker`. A full Verified run needs ~**180G** for 500 images — use `./scripts/docker_storage.sh` to confirm layout and headroom before long runs.
+On EC2, bootstrap stores image layers under **`/data/containerd`** (containerd snapshotter), not `/var/lib/docker`. Plan for **~300GB** on `/data` for a full 500-image cache; the default data volume is **500GB** (~200GB left for results/logs). `prepull.sh` inspects which images are already local and only requires proportional free space (scaled from the 300GB budget), with a **100GB minimum** for running the benchmark. Use `./scripts/docker_storage.sh` to confirm layout and headroom before long runs.
 
 **Pre-pull before a full run** (on-demand pulls during the agent run can fill the wrong disk or hit Hub rate limits):
 
 ```bash
 ./scripts/docker_storage.sh           # layout + free space report
-./scripts/prepull.sh                  # all 500 images (checks 150G free on /data first)
+./scripts/prepull.sh                  # all 500 images (headroom scales with missing images; min 100G)
 ./scripts/prepull.sh 25                 # first 25 (smoke / test)
 ./scripts/prune_images.sh qwen-june     # drop images for completed instances
 ```

@@ -34,7 +34,7 @@ cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BA
 ./infra/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
 
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
-./scripts/prepull.sh qwen          # required before full Verified runs (500 images ~180G)
+./scripts/prepull.sh qwen          # required before full Verified runs (dynamic /data headroom; min 100G)
 ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
 ./scripts/summary.sh qwen qwen-opt-v1
 ```
@@ -63,7 +63,7 @@ tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 | Setting | Default |
 |---------|---------|
 | Type | `m6i.2xlarge` (8 vCPU, 32 GiB) |
-| Data volume | 300 GiB gp3 on `/data` |
+| Data volume | 500 GiB gp3 on `/data` |
 | AMI | Ubuntu 24.04 amd64 (Python 3.12) |
 | Repo on instance | `/opt/swe-bench` |
 | Region | `us-east-1` |
@@ -71,7 +71,13 @@ tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 Override at deploy time:
 
 ```bash
-INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=400 ./infra/deploy.sh qwen
+INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=600 ./infra/deploy.sh qwen
+```
+
+Grow an existing stage volume in place (data preserved):
+
+```bash
+./infra/resize-data-volume.sh qwen 500
 ```
 
 ## Python toolchain (`mini-swe-runs`)
@@ -92,7 +98,7 @@ After `deploy.sh`, run [`./infra/bootstrap.sh`](infra/bootstrap.sh) `<stage>`. I
 
 | Path | Purpose |
 |------|---------|
-| `/data/containerd` | Image layers and snapshots (~180G for 500 Verified images) |
+| `/data/containerd` | Image layers and snapshots (~300G budget for 500 Verified images) |
 | `/data/docker` | Docker metadata (`daemon.json` `data-root`) |
 | `/data/swe-bench` | Repo, results, venv |
 
@@ -111,7 +117,7 @@ Logs on the instance: `/var/log/swe-bench-bootstrap.log`
 
 ## Fresh deploy (destroy + recreate)
 
-Each **stage** has its own EC2 instance (`swe-bench-runner-<stage>`) and data EBS volume (`swe-bench-runner-<stage>-data`, 300 GiB by default). Destroying `qwen` does not touch `kimi`.
+Each **stage** has its own EC2 instance (`swe-bench-runner-<stage>`) and data EBS volume (`swe-bench-runner-<stage>-data`, 500 GiB by default). Destroying `qwen` does not touch `kimi`.
 
 Export results before destroy if you need them:
 
@@ -147,6 +153,7 @@ Infra: `./infra/<name>.sh <stage> [...]` — provision and operate the host.
 | Script | Purpose |
 |--------|---------|
 | `deploy.sh` | `sst deploy` + wait for SSM |
+| `resize-data-volume.sh` | Grow data EBS volume in place + `resize2fs` on `/data` |
 | `bootstrap.sh` | Instance setup via SSM (Docker, uv, `/data`) — run after deploy |
 | `destroy.sh` | `sst remove` — deletes stack **and** data EBS volume (destructive) |
 | `stop.sh` / `start.sh` | Stop/start EC2 (instance + disk retained; no compute charge while stopped) |
@@ -167,7 +174,8 @@ Where a run is referenced, pass **`RUN_NAME`** only (same as the third arg to `r
 | `prepull.sh` / `docker_storage.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
 | `summary.sh` | Remote `mini-swe-runs/scripts/summary.sh` (scorecard + status) |
 | `pull-results.sh` | `[RUN_NAME]` → rsync artifacts to laptop |
-| `upload-results.sh` | `[RUN_NAME]` → zip on EC2 → optional R2 upload |
+| `upload-results.sh` | `[RUN_NAME]` → zip full `results/<RUN_NAME>/` → R2 |
+| `restore-results.sh` | `[RUN_NAME]` → download R2 archive → unzip into `results/` (resume) |
 
 ## Secrets (`.env`)
 
@@ -187,9 +195,17 @@ R2_PREFIX=swe-bench-runs
 
 ```bash
 ./scripts/upload-results.sh qwen verified-full-v2
-./scripts/upload-results.sh qwen verified-full-v2 --trajectories
-./scripts/upload-results.sh qwen smoke --local   # from laptop
+./scripts/upload-results.sh qwen verified-full-v2 --force   # overwrite stable archive
+./scripts/upload-results.sh qwen smoke --local              # zip + upload from laptop
+
+# Resume on a fresh instance (after push-env + sync):
+./scripts/restore-results.sh qwen verified-full-v2
+./scripts/run-tmux.sh qwen yaml/qwen/verified-full.yaml verified-full-v2
 ```
+
+R2 object key (stable, per run name): `{R2_PREFIX}/{RUN_NAME}/swe-bench-{RUN_NAME}.zip`. The zip mirrors the local `results/<RUN_NAME>/` tree; restore unzips into `results/` so paths match exactly.
+
+Remote upload/restore use the AWS CLI with R2 credentials from `.env` (not the instance IAM role). Install once on the instance if needed: `sudo apt-get install -y awscli`.
 
 ## Persistence
 
@@ -198,13 +214,13 @@ R2_PREFIX=swe-bench-runs
 | EC2 **stop** / **start** | Yes (same instance, volume attached) |
 | `./infra/stop.sh <stage>` | Yes |
 | `./infra/start.sh <stage>` | Yes — resumes the stopped instance |
-| `./scripts/pull-results.sh` / `upload-results.sh` | Export copy (do before destroy) |
+| `./scripts/pull-results.sh` / `upload-results.sh` / `restore-results.sh` | Export / archive / restore copy |
 | `./infra/destroy.sh <stage>` | **No** — SST removes stack and data volume |
 
 ## Cost (us-east-1, on-demand)
 
 - `m6i.2xlarge` ≈ **$0.38/hr** while running
-- 300 GiB gp3 ≈ **~$24/mo** while volume exists (including while instance is stopped)
+- 500 GiB gp3 ≈ **~$40/mo** while volume exists (including while instance is stopped)
 - `./infra/destroy.sh` stops volume billing by deleting the EBS volume
 
 ## Debugging

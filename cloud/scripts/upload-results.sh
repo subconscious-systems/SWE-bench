@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Zip a results directory and upload to Cloudflare R2.
+# Zip results/<RUN_NAME>/ (full tree) and upload to Cloudflare R2.
 #
 # Usage:
 #   ./scripts/upload-results.sh <stage> [RUN_NAME]
-#   ./scripts/upload-results.sh <stage> [RUN_NAME] --trajectories
 #   ./scripts/upload-results.sh <stage> [RUN_NAME] --local
+#   ./scripts/upload-results.sh <stage> [RUN_NAME] --force
 set -euo pipefail
 # shellcheck source=../infra/_common.sh
 source "$(dirname "$0")/../infra/_common.sh"
@@ -14,11 +14,11 @@ shift
 
 RUN_NAME_ARG=""
 LOCAL=0
-TRAJ=0
+FORCE=0
 for arg in "$@"; do
   case "$arg" in
     --local) LOCAL=1 ;;
-    --trajectories) TRAJ=1 ;;
+    --force) FORCE=1 ;;
     -*) echo "unknown flag: $arg" >&2; exit 1 ;;
     *)
       if [[ -n "$RUN_NAME_ARG" ]]; then
@@ -31,30 +31,38 @@ for arg in "$@"; do
 done
 cloud_parse_run_name "${RUN_NAME_ARG:-}"
 
-TS="$(date -u +%Y%m%dT%H%M%SZ)"
-ZIP_NAME="swe-bench-${RUN_NAME}-${TS}.zip"
-LIB="$(dirname "$0")/lib"
+LIB="$(cd "$(dirname "$0")/lib" && pwd)"
+ZIP_NAME="swe-bench-${RUN_NAME}.zip"
+FORCE_FLAG=""
+[[ "$FORCE" == "1" ]] && FORCE_FLAG="--force"
 
 if [[ "$LOCAL" == "1" ]]; then
-  RESULTS="$REPO_ROOT/mini-swe-runs/results/$RUN_NAME"
+  RESULTS_PARENT="$REPO_ROOT/mini-swe-runs/results"
   ZIP="/tmp/$ZIP_NAME"
-  bash "$LIB/zip-results.sh" "$RESULTS" "$ZIP" $([[ "$TRAJ" == "1" ]] && echo --trajectories)
-  (cd "$REPO_ROOT/mini-swe-runs" && bash "$CLOUD_DIR/scripts/lib/r2-upload.sh" "$ZIP" "$RUN_NAME/$ZIP_NAME")
+  bash "$LIB/zip-results.sh" "$RESULTS_PARENT" "$RUN_NAME" "$ZIP"
+  (
+    cd "$REPO_ROOT/mini-swe-runs"
+    # shellcheck source=lib/r2-common.sh
+    source "$LIB/r2-common.sh"
+    r2_load_env
+    bash "$LIB/r2-upload.sh" "$ZIP" "$(r2_object_key "$RUN_NAME")" $FORCE_FLAG
+  )
+  rm -f "$ZIP"
   exit 0
 fi
 
 require_aws
-REMOTE_RESULTS="$MINI_SWE_RUNS_PATH/results/$RUN_NAME"
 REMOTE_ZIP="/data/tmp/$ZIP_NAME"
 [[ -d /data/tmp ]] 2>/dev/null || REMOTE_ZIP="/tmp/$ZIP_NAME"
 
-TRAJ_FLAG=""
-[[ "$TRAJ" == "1" ]] && TRAJ_FLAG="--trajectories"
+FORCE_REMOTE=""
+[[ "$FORCE" == "1" ]] && FORCE_REMOTE="--force"
 
 remote_exec "set -euo pipefail
 cd '$MINI_SWE_RUNS_PATH'
-bash '$REPO_PATH/cloud/scripts/lib/zip-results.sh' 'results/$RUN_NAME' '$REMOTE_ZIP' $TRAJ_FLAG
-source .env
-bash '$REPO_PATH/cloud/scripts/lib/r2-upload.sh' '$REMOTE_ZIP' '$RUN_NAME/$ZIP_NAME'
+bash '$REPO_PATH/cloud/scripts/lib/zip-results.sh' 'results' '$RUN_NAME' '$REMOTE_ZIP'
+source '$REPO_PATH/cloud/scripts/lib/r2-common.sh'
+r2_load_env .env
+bash '$REPO_PATH/cloud/scripts/lib/r2-upload.sh' '$REMOTE_ZIP' \"\$(r2_object_key '$RUN_NAME')\" $FORCE_REMOTE
 rm -f '$REMOTE_ZIP'
 "

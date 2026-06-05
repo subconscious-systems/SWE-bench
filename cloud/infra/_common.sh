@@ -106,7 +106,7 @@ cloud_confirm_destroy() {
   echo
   echo "This runs 'sst remove' and deletes ALL resources for this stage:"
   echo "  - EC2 instance swe-bench-runner-$STAGE"
-  echo "  - Data EBS volume swe-bench-runner-$STAGE-data (default ~300 GiB gp3)"
+  echo "  - Data EBS volume swe-bench-runner-$STAGE-data (default ~500 GiB gp3)"
   echo "    Docker images, synced repo, and ALL benchmark results on /data"
   echo "  - IAM role, security group, volume attachment"
   echo
@@ -114,7 +114,7 @@ cloud_confirm_destroy() {
   echo "  Pause compute, keep volume:  ./infra/stop.sh $STAGE"
   echo "  Copy results to laptop:      ./scripts/pull-results.sh $STAGE <RUN_NAME>"
   echo "  Archive zip to R2:           ./scripts/upload-results.sh $STAGE <RUN_NAME>"
-  echo "                               (add --trajectories if needed)"
+  echo "  Restore from R2:             ./scripts/restore-results.sh $STAGE <RUN_NAME>"
   echo
   read -r -p "Continue with permanent destroy? [y/N] " ans
   case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted."; exit 0 ;; esac

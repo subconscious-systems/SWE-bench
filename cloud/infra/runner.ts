@@ -1,6 +1,6 @@
 export function createRunner() {
   const instanceType = process.env.INSTANCE_TYPE ?? "m6i.2xlarge";
-  const dataVolumeSize = Number(process.env.DATA_VOLUME_GB ?? "300");
+  const dataVolumeSize = Number(process.env.DATA_VOLUME_GB ?? "500");
 
   const role = new aws.iam.Role("RunnerRole", {
     assumeRolePolicy: JSON.stringify({

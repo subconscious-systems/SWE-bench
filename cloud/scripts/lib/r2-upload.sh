@@ -1,32 +1,42 @@
 #!/usr/bin/env bash
-# Upload a file to Cloudflare R2 via S3-compatible API. Sources .env for credentials.
-# Usage: r2-upload.sh <local-file> <s3-key>
+# Upload a file to Cloudflare R2.
+#
+# Usage: r2-upload.sh <LOCAL_PATH> <OBJECT_KEY> [--force]
+#   Loads R2_* from .env in cwd (or mini-swe-runs/.env).
 set -euo pipefail
 
-LOCAL_FILE="${1:?file}"
-S3_KEY="${2:?key}"
+LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=r2-common.sh
+source "$LIB_DIR/r2-common.sh"
 
-if [[ -f .env ]]; then set -a; source .env; set +a; fi
+if [[ $# -lt 2 ]]; then
+  echo "usage: $0 <LOCAL_PATH> <OBJECT_KEY> [--force]" >&2
+  exit 2
+fi
 
-: "${R2_ACCOUNT_ID:?set R2_ACCOUNT_ID in .env}"
-: "${R2_ACCESS_KEY_ID:?set R2_ACCESS_KEY_ID in .env}"
-: "${R2_SECRET_ACCESS_KEY:?set R2_SECRET_ACCESS_KEY in .env}"
-: "${R2_BUCKET:?set R2_BUCKET in .env}"
+LOCAL_PATH="$1"
+OBJECT_KEY="$2"
+FORCE=0
+shift 2
+for arg in "$@"; do
+  case "$arg" in
+    --force) FORCE=1 ;;
+    *) echo "unknown flag: $arg" >&2; exit 1 ;;
+  esac
+done
 
-R2_PREFIX="${R2_PREFIX:-swe-bench-runs}"
-ENDPOINT="${R2_ENDPOINT:-https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}"
+[[ -f "$LOCAL_PATH" ]] || { echo "error: file not found: $LOCAL_PATH" >&2; exit 1; }
 
-export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID"
-export AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY"
-export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-auto}"
+r2_load_env
+r2_confirm_overwrite "$OBJECT_KEY" "$FORCE"
 
-FULL_KEY="${R2_PREFIX%/}/${S3_KEY}"
-DEST="s3://${R2_BUCKET}/${FULL_KEY}"
+aws s3 cp "$LOCAL_PATH" "$(r2_s3_uri "$OBJECT_KEY")" \
+  --endpoint-url "$R2_ENDPOINT" \
+  --only-show-errors
 
-command -v aws >/dev/null || { echo "error: aws cli required" >&2; exit 1; }
+echo "uploaded $(r2_s3_uri "$OBJECT_KEY")"
 
-aws s3 cp "$LOCAL_FILE" "$DEST" --endpoint-url "$ENDPOINT"
-echo "Uploaded: $DEST"
 if [[ -n "${R2_PUBLIC_BASE_URL:-}" ]]; then
-  echo "URL: ${R2_PUBLIC_BASE_URL%/}/${FULL_KEY}"
+  base="${R2_PUBLIC_BASE_URL%/}"
+  echo "public: ${base}/${OBJECT_KEY}"
 fi

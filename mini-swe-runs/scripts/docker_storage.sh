@@ -5,8 +5,12 @@
 # Usage:
 #   ./scripts/docker_storage.sh              # full report
 #   ./scripts/docker_storage.sh --quiet      # exit 1 only on misconfig
-#   ./scripts/docker_storage.sh --require-headroom 150G
+#   ./scripts/docker_storage.sh --require-headroom 300G
 set -euo pipefail
+
+# Full Verified image cache budget on /data; prepull scales headroom by missing images (see prepull.sh).
+FULL_IMAGE_CACHE_BUDGET="${FULL_IMAGE_CACHE_BUDGET:-300G}"
+MIN_RUN_HEADROOM="${MIN_RUN_HEADROOM:-100G}"
 
 QUIET=0
 REQUIRE_HEADROOM_KB=""
@@ -75,6 +79,7 @@ if [[ "$QUIET" -eq 1 ]]; then
 fi
 
 echo "=== Docker / containerd storage ==="
+echo "image cache budget: $FULL_IMAGE_CACHE_BUDGET (full pull); min headroom at run time: $MIN_RUN_HEADROOM"
 echo
 echo "--- mounts ---"
 df -h / /data 2>/dev/null || df -h /
