@@ -190,7 +190,7 @@ ensure_runner_layout() {
 set -euo pipefail
 repo="$1"
 msr="$2"
-sudo mkdir -p /data/swe-bench /data/docker /data/tmp
+sudo mkdir -p /data/swe-bench /data/docker /data/containerd /data/tmp
 sudo chown -R ubuntu:ubuntu /data
 if [[ -d "$repo" && ! -L "$repo" ]]; then
   sudo rm -rf "$repo"
@@ -437,6 +437,11 @@ getent group docker | grep -qw ubuntu
 sudo -u ubuntu sg docker -c "docker info >/dev/null"
 test -x /usr/local/bin/uv || command -v uv >/dev/null
 test -e /opt/swe-bench
+grep -q 'root = "/data/containerd"' /etc/containerd/config.toml
+test "$(df --output=avail /data | tail -1 | tr -d ' ')" -gt 104857600
+if [[ -x /opt/swe-bench/mini-swe-runs/scripts/docker_storage.sh ]]; then
+  /opt/swe-bench/mini-swe-runs/scripts/docker_storage.sh --quiet
+fi
 echo "ready: docker=$(docker --version) uv=$(/usr/local/bin/uv --version 2>/dev/null || uv --version)"
 SCRIPT
   python3 - "$script" "$params" <<'PY'

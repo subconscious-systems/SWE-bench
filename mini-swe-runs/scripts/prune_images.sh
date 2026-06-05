@@ -24,5 +24,5 @@ EOF
 )
 
 docker image prune -f >/dev/null 2>&1 || true
-echo "pruned $removed completed-instance image(s); disk now:"
-docker system df | head -3
+echo "pruned $removed completed-instance image(s)"
+"$SCRIPT_DIR/docker_storage.sh"

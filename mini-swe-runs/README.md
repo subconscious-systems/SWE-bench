@@ -71,6 +71,7 @@ From [`../cloud/`](../cloud/) (see [`cloud/README.md`](../cloud/README.md) for f
 ./infra/push-env.sh qwen
 ./infra/sync.sh qwen --install
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
+./scripts/prepull.sh qwen              # before full Verified runs
 ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1
 ```
 
@@ -81,11 +82,18 @@ Completed instances are in `preds.json` and skipped on re-run. Smoke yamls set `
 
 ## Disk / images
 
+On EC2, bootstrap stores image layers under **`/data/containerd`** (containerd snapshotter), not `/var/lib/docker`. A full Verified run needs ~**180G** for 500 images — use `./scripts/docker_storage.sh` to confirm layout and headroom before long runs.
+
+**Pre-pull before a full run** (on-demand pulls during the agent run can fill the wrong disk or hit Hub rate limits):
+
 ```bash
-./scripts/prepull.sh        # all 500 images
-./scripts/prepull.sh 25     # first 25
-./scripts/prune_images.sh qwen-june
+./scripts/docker_storage.sh           # layout + free space report
+./scripts/prepull.sh                  # all 500 images (checks 150G free on /data first)
+./scripts/prepull.sh 25                 # first 25 (smoke / test)
+./scripts/prune_images.sh qwen-june     # drop images for completed instances
 ```
+
+Optional: `docker login` before prepull for higher Docker Hub rate limits.
 
 `CLEAN=True ./scripts/evaluate.sh qwen-june` — eval with container cleanup.
 
@@ -121,5 +129,7 @@ Scripts that take a run use **`RUN_NAME`** only (e.g. `smoke-qwen`), not `result
 | `scripts/summary.sh` | Scorecard + paths + recent status |
 | `scripts/status.sh` | In-progress snapshot |
 | `scripts/timings.sh` | Wall-clock report |
+| `scripts/docker_storage.sh` | Containerd/Docker paths and disk headroom |
+| `scripts/prepull.sh` | Pre-pull eval images (pre-flight storage check) |
 | `scripts/prune_images.sh` | Drop Docker images for completed instances |
 | `scripts/repro_runaway.sh` | Single-instance repro with trace proxy |

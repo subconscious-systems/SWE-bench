@@ -34,6 +34,7 @@ cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BA
 ./infra/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
 
 ./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
+./scripts/prepull.sh qwen          # required before full Verified runs (500 images ~180G)
 ./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
 ./scripts/summary.sh qwen qwen-opt-v1
 ```
@@ -45,6 +46,7 @@ Kimi on a separate stack:
 ./infra/bootstrap.sh kimi
 ./infra/push-env.sh kimi
 ./infra/sync.sh kimi --install
+./scripts/prepull.sh kimi
 ./scripts/run-tmux.sh kimi yaml/kimi/verified-full.yaml kimi-june
 ```
 
@@ -86,9 +88,22 @@ Run scripts use `uv run` (not `uvx`). Python **3.12** is uv-managed (`python-pre
 
 After `deploy.sh`, run [`./infra/bootstrap.sh`](infra/bootstrap.sh) `<stage>`. It runs [`user-data/bootstrap.sh`](user-data/bootstrap.sh) on the instance via SSM (Docker CE, uv, `/data` volume, `/opt/swe-bench` layout). Idempotent — safe to re-run.
 
+**Docker storage:** Docker CE uses the containerd snapshotter — image layers live under containerd `root`, not Docker `data-root`. Bootstrap configures:
+
+| Path | Purpose |
+|------|---------|
+| `/data/containerd` | Image layers and snapshots (~180G for 500 Verified images) |
+| `/data/docker` | Docker metadata (`daemon.json` `data-root`) |
+| `/data/swe-bench` | Repo, results, venv |
+
+Symlinking `/var/lib/docker` → `/data/docker` alone is **not** enough; bootstrap sets `root = "/data/containerd"` in `/etc/containerd/config.toml` before starting Docker.
+
+Re-running `./infra/bootstrap.sh <stage>` on an existing host **auto-migrates** `/var/lib/containerd` → `/data/containerd` (rsync) and reclaims root disk when images verify.
+
 Verifies:
 
 - `docker info` works (root and `ubuntu` via `sg docker`)
+- containerd `root` is `/data/containerd`
 - `uv` is installed
 - `/opt/swe-bench` exists
 
@@ -149,7 +164,7 @@ Where a run is referenced, pass **`RUN_NAME`** only (same as the third arg to `r
 |--------|---------|
 | `run.sh` | `<yaml-path> <RUN_NAME>` → remote `mini-swe-runs/scripts/run.sh` (foreground) |
 | `run-tmux.sh` | Same args, detached tmux session (`TMUX_SESSION` overrides session name) |
-| `prepull.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
+| `prepull.sh` / `docker_storage.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
 | `summary.sh` | Remote `mini-swe-runs/scripts/summary.sh` (scorecard + status) |
 | `pull-results.sh` | `[RUN_NAME]` → rsync artifacts to laptop |
 | `upload-results.sh` | `[RUN_NAME]` → zip on EC2 → optional R2 upload |
@@ -197,14 +212,28 @@ R2_PREFIX=swe-bench-runs
 ```bash
 ./infra/ssh.sh qwen
 cd /opt/swe-bench/mini-swe-runs
+./scripts/docker_storage.sh          # containerd root, / vs /data headroom
 ./scripts/status.sh qwen-june
 uv run pier --help
 
 # Or from laptop:
+./scripts/docker_storage.sh qwen
 ./scripts/status.sh qwen smoke-qwen
 ./scripts/summary.sh qwen smoke-qwen
 # Claude Code (install once on instance): curl -fsSL https://claude.ai/install.sh | bash
 ```
+
+Bootstrap log on the instance: `/var/log/swe-bench-bootstrap.log`
+
+## Recovering from a disk-full run
+
+If a full run ends with mass `docker run` exit **125** and hundreds of **empty patches** in `preds.json` (infrastructure failures, not model quality):
+
+1. Re-bootstrap to fix storage: `./infra/bootstrap.sh <stage>` (migrates containerd to `/data`)
+2. On the instance, remove empty-patch entries from `preds.json` (keep successes; do **not** use `--redo-existing` unless you want to redo all 500)
+3. Pre-pull: `./scripts/prepull.sh <stage>`
+4. Re-run agent: `./scripts/run-tmux.sh <stage> <yaml> <RUN_NAME>`
+5. Re-evaluate: `./scripts/evaluate.sh <stage> <RUN_NAME>`
 
 ## SST only
 
