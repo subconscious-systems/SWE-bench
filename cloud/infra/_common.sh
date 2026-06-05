@@ -444,10 +444,12 @@ if [[ -x /opt/swe-bench/mini-swe-runs/scripts/docker_storage.sh ]]; then
 fi
 echo "ready: docker=$(docker --version) uv=$(/usr/local/bin/uv --version 2>/dev/null || uv --version)"
 SCRIPT
+  # Base64-wrap like remote_bootstrap: a single-line command survives SSM/shell
+  # quoting; embedding the script inline via bash -c mangles newlines.
   python3 - "$script" "$params" <<'PY'
-import json, sys
-script = open(sys.argv[1]).read()
-json.dump({"commands": ["bash -c " + json.dumps(script)]}, open(sys.argv[2], "w"))
+import base64, json, sys
+b64 = base64.b64encode(open(sys.argv[1], "rb").read()).decode()
+json.dump({"commands": [f"echo {b64} | base64 -d | bash"]}, open(sys.argv[2], "w"))
 PY
   local cmd_id
   cmd_id="$(aws ssm send-command \
