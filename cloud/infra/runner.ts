@@ -1,6 +1,9 @@
 export function createRunner() {
   const instanceType = process.env.INSTANCE_TYPE ?? "m6i.2xlarge";
   const dataVolumeSize = Number(process.env.DATA_VOLUME_GB ?? "500");
+  // Optional: provision the data volume from a golden snapshot (prepulled
+  // docker images) instead of a blank volume. Created via `swb snapshot-data`.
+  const dataSnapshotId = process.env.DATA_SNAPSHOT_ID;
 
   const role = new aws.iam.Role("RunnerRole", {
     assumeRolePolicy: JSON.stringify({
@@ -67,15 +70,25 @@ export function createRunner() {
     },
   });
 
-  const dataVolume = new aws.ebs.Volume("RunnerData", {
-    availabilityZone: instance.availabilityZone,
-    size: dataVolumeSize,
-    type: "gp3",
-    encrypted: true,
-    tags: {
-      Name: `swe-bench-runner-${$app.stage}-data`,
+  const dataVolume = new aws.ebs.Volume(
+    "RunnerData",
+    {
+      availabilityZone: instance.availabilityZone,
+      size: dataVolumeSize,
+      type: "gp3",
+      encrypted: true,
+      ...(dataSnapshotId ? { snapshotId: dataSnapshotId } : {}),
+      tags: {
+        Name: `swe-bench-runner-${$app.stage}-data`,
+      },
     },
-  });
+    {
+      // snapshotId/size changes force volume REPLACEMENT (data loss). The
+      // snapshot only matters at creation; size grows out-of-band via
+      // `swb resize`. Ignore both on subsequent deploys.
+      ignoreChanges: ["snapshotId", "size"],
+    },
+  );
 
   const volumeAttachment = new aws.ec2.VolumeAttachment("RunnerDataAttach", {
     deviceName: "/dev/sdf",
@@ -91,6 +104,7 @@ export function createRunner() {
     instancePublicIp: instance.publicIp,
     region: aws.getRegionOutput().name,
     dataVolumeId: dataVolume.id,
+    dataSnapshotId: dataSnapshotId ?? "none",
     repoPath,
     miniSweRunsPath,
     instanceType,

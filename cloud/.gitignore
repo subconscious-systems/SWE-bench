@@ -3,3 +3,4 @@ node_modules/
 sst-env.d.ts
 .runner-known-hosts
 dist/
+.snapshot-id

@@ -1,187 +1,188 @@
 # SWE-bench EC2 runner (SST)
 
-Provision a dedicated **x86_64** EC2 host for [mini-swe-runs](../mini-swe-runs/) (SWE-bench Verified × mini-swe-agent), with **SSM/SSH** access, persistent disk, and optional **Cloudflare R2** archival.
+Provision a dedicated **x86_64** EC2 host for [mini-swe-runs](../mini-swe-runs/) (SWE-bench Verified × mini-swe-agent), with **SSM/SSH** access, persistent disk, a **golden EBS snapshot** so new instances start with all ~500 eval images already present, and optional **Cloudflare R2** archival.
 
-Infrastructure is defined in [`sst.config.ts`](sst.config.ts) and [`infra/runner.ts`](infra/runner.ts) ([SST Ion v3](https://sst.dev/docs/)). Shell helpers live in [`infra/`](infra/) (provision, sync, destroy) and [`scripts/`](scripts/) (benchmark runs and results). Benchmark logic on the instance is in `mini-swe-runs/scripts/`.
+Everything is driven by one CLI: [`./swb`](swb).
+
+```
+cloud/
+  swb               # the CLI (run `./swb help`)
+  infra/runner.ts   # SST/Pulumi resources (EC2, EBS, IAM)
+  lib/              # laptop-side helpers (stage/AWS, SSH-over-SSM transport, SSM, R2)
+  remote/           # scripts that run ON the instance (bootstrap, ready, results)
+```
 
 ## Prerequisites (laptop)
 
 - Node.js 20+
 - [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) + [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
 - AWS SSO configured in `~/.aws/config` with permission to deploy EC2, IAM, EBS, `ssm:StartSession`, `ssm:SendCommand`, and `ec2-instance-connect:SendSSHPublicKey`
-- Local SSH key (`~/.ssh/id_ed25519` or `~/.ssh/id_rsa`) — used with EC2 Instance Connect for scp/rsync over SSM
-- `rsync`, `ssh`, `scp`, `uv` (for local lockfile work)
+- Local SSH key (`~/.ssh/id_ed25519` or `~/.ssh/id_rsa`) — used with EC2 Instance Connect over SSM
+- `git`, `ssh`
 
 ```bash
 aws sso login
 ```
 
-Region defaults to **us-east-1** in all cloud scripts. Credentials come from the AWS CLI default chain after SSO login.
+Region defaults to **us-east-1**.
 
 ## Stages
 
-Every cloud script takes **`<stage>`** as its first argument. One stage = one EC2 stack, tagged `swe-bench-runner-<stage>` (e.g. `qwen`, `kimi`). Use separate stages to run Qwen and Kimi benchmarks on independent hosts.
+Every command takes **`<stage>`** as its first argument after the command name. One stage = one EC2 stack, tagged `swe-bench-runner-<stage>` (e.g. `qwen`, `kimi`). Use separate stages to run Qwen and Kimi benchmarks on independent hosts.
 
 ## Quick start
 
 ```bash
 cd cloud
-./infra/deploy.sh qwen          # SST deploy + wait for SSM
-./infra/bootstrap.sh qwen       # Docker, uv, /data layout (idempotent)
+./swb deploy qwen               # SST deploy + wait for SSM (uses golden snapshot if cloud/.snapshot-id exists)
+./swb bootstrap qwen            # Docker on /data, uv, deploy repo (idempotent)
+
+git commit ...                  # sync deploys COMMITTED code (see "Code sync")
+./swb sync qwen --install       # git push HEAD -> instance + uv sync --frozen
 
 cp ../mini-swe-runs/.env.example ../mini-swe-runs/.env   # QWEN_API_KEY, QWEN_BASE_URL, …
-./infra/push-env.sh qwen
-./infra/sync.sh qwen --install  # rsync repo + uv sync --frozen on EC2
+./swb env qwen
 
-./scripts/run.sh qwen yaml/qwen/smoke.yaml smoke-qwen
-./scripts/prepull.sh qwen          # required before full Verified runs (dynamic /data headroom; min 100G)
-./scripts/run-tmux.sh qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1   # long jobs in tmux
-./scripts/summary.sh qwen qwen-opt-v1
-```
-
-Kimi on a separate stack:
-
-```bash
-./infra/deploy.sh kimi
-./infra/bootstrap.sh kimi
-./infra/push-env.sh kimi
-./infra/sync.sh kimi --install
-./scripts/prepull.sh kimi
-./scripts/run-tmux.sh kimi yaml/kimi/verified-full.yaml kimi-june
+./swb run qwen yaml/qwen/smoke.yaml smoke-qwen
+./swb run qwen yaml/qwen/optimized-v1.yaml qwen-opt-v1 --detach   # long jobs in tmux
+./swb summary qwen qwen-opt-v1
 ```
 
 Attach to a running tmux job:
 
 ```bash
-./infra/ssh.sh qwen
-tmux attach -t swebench-qwen-opt-v1   # or your TMUX_SESSION / RUN_NAME
+./swb ssh qwen
+tmux attach -t swebench-qwen-opt-v1
 tail -f /opt/swe-bench/mini-swe-runs/results/<RUN_NAME>/minisweagent.log
 ```
+
+## The golden data snapshot (no more 300GB prepull per stage)
+
+The ~500 SWE-bench Verified instance images total ~300GB. Instead of pulling them on every fresh volume, pull them **once** on a reference stage, snapshot that volume, and provision every new stage's data volume from the snapshot:
+
+```bash
+# One time (or whenever the image set changes):
+./swb deploy golden && ./swb bootstrap golden && ./swb sync golden --install && ./swb env golden
+./swb prepull golden              # the slow ~300GB pull — done once ever
+./swb snapshot-data golden        # freeze /data, snapshot, save id to cloud/.snapshot-id
+
+# Every new stage starts with all images already on disk:
+./swb deploy kimi                 # picks up cloud/.snapshot-id automatically
+./swb bootstrap kimi              # detects existing ext4 — no mkfs, no prepull
+```
+
+Notes:
+
+- `DATA_SNAPSHOT_ID=snap-xxxx ./swb deploy <stage>` overrides the file; `DATA_SNAPSHOT_ID=none` forces a blank volume.
+- The snapshot only matters at volume **creation**. Existing stages are never touched (`runner.ts` ignores `snapshotId`/`size` changes to prevent accidental volume replacement).
+- `DATA_VOLUME_GB` is raised automatically if it's smaller than the snapshot.
+- Blocks lazy-hydrate from S3 on first read — the first run after a snapshot restore reads images slightly slower; subsequent reads are full speed.
+- Images missing from the snapshot (e.g. a new SWE-bench release) pull lazily during evaluation (`--namespace swebench` in the harness) — `prepull` is an **optional** warm-up, not a required step.
+- Refresh: on `golden`, `./swb prepull golden` (pulls only deltas) → `./swb snapshot-data golden`.
+
+## Code sync (git push, not rsync)
+
+`./swb sync <stage> [commit-ish]` deploys **committed code only**:
+
+1. Resolves the commit (default: your current `HEAD`; any branch/tag/SHA works).
+2. `git push --force` to a bare repo on the instance (`/data/repo.git`) over the same SSH-over-SSM transport — no GitHub round-trip, no token on the instance, delta transfer after the first push.
+3. Checks that exact commit out into `/opt/swe-bench` and records it in `/opt/swe-bench/.deployed-sha`.
+
+A dirty working tree prints a warning — uncommitted changes never deploy. Untracked files on the instance (`results/`, eval `logs/`, `.venv`, `.env`) are never touched. Gitignored files never transfer, so there is no exclude list to maintain.
+
+```bash
+./swb sync qwen                    # deploy local HEAD
+./swb sync qwen my-branch          # deploy a branch
+./swb sync qwen abc1234 --install  # deploy a SHA + uv sync --frozen
+```
+
+What's running on a stage is always answerable: `./swb ready qwen` prints the deployed SHA.
 
 ## Instance defaults
 
 | Setting | Default |
 |---------|---------|
 | Type | `m6i.2xlarge` (8 vCPU, 32 GiB) |
-| Data volume | 500 GiB gp3 on `/data` |
+| Data volume | 500 GiB gp3 on `/data` (from golden snapshot when available) |
 | AMI | Ubuntu 24.04 amd64 (Python 3.12) |
-| Repo on instance | `/opt/swe-bench` |
+| Repo on instance | `/opt/swe-bench` (root volume); deploy repo at `/data/repo.git` |
 | Region | `us-east-1` |
 
 Override at deploy time:
 
 ```bash
-INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=600 ./infra/deploy.sh qwen
+INSTANCE_TYPE=m6i.4xlarge DATA_VOLUME_GB=600 ./swb deploy qwen
 ```
 
 Grow an existing stage volume in place (data preserved):
 
 ```bash
-./infra/resize-data-volume.sh qwen 500
+./swb resize qwen 600
 ```
 
-## Python toolchain (`mini-swe-runs`)
+## Commands
 
-Pinned in [`../mini-swe-runs/pyproject.toml`](../mini-swe-runs/pyproject.toml) + `uv.lock`:
+Run `./swb help` for the full reference.
 
-- `mini-swe-agent==2.3.0`
-- `datacurve-pier` from GitHub (target tag **v2.1.0**; lock currently pins `main@830ed6b` until upstream publishes the tag — re-run `uv lock` after `v2.1.0` exists)
-- `swebench`, `datasets`
+| Command | Purpose |
+|---------|---------|
+| `deploy <stage>` | `sst deploy` + wait for SSM (golden snapshot for new stages) |
+| `bootstrap <stage>` | Instance setup via SSM (Docker on `/data`, uv, AWS CLI, deploy repo) — idempotent, re-run when idle |
+| `sync <stage> [commit] [--install]` | git push + checkout (+ `uv sync --frozen`) |
+| `env <stage> [--dry-run\|--diff]` | Copy `mini-swe-runs/.env` to the instance |
+| `run <stage> <yaml> <RUN_NAME> [--detach]` | Run a benchmark (foreground, or detached tmux) |
+| `status` / `evaluate` / `summary` / `salvage` / `prepull` / `storage` | Thin wrappers over `mini-swe-runs/scripts/*` on the instance |
+| `results push <stage> <RUN_NAME> [--force] [--local]` | Zip `results/<RUN_NAME>/` → R2 |
+| `results restore <stage> <RUN_NAME> [--force] [--local]` | R2 → unzip into `results/` (resume) |
+| `results pull <stage> <RUN_NAME> [--logs] [--trajectories]` | Copy artifacts to the laptop |
+| `snapshot-data <stage>` | Create/refresh the golden data snapshot |
+| `ssh` / `connect` | Interactive shell (SSH-over-SSM / plain SSM) |
+| `ready <stage>` | Readiness checks + deployed SHA + image count |
+| `resize <stage> <GB>` | Grow data volume + ext4 |
+| `stop` / `start` / `destroy` | Lifecycle (destroy = triple confirm, deletes data volume) |
 
-Run scripts use `uv run` (not `uvx`). Python **3.12** is uv-managed (`python-preference = only-managed` in `mini-swe-runs/pyproject.toml`) — not pyenv. On the instance, `install-deps.sh` runs `uv sync --frozen` (uv installs CPython if needed).
+Old script → new command:
+
+| Old | New |
+|-----|-----|
+| `infra/deploy.sh`, `infra/bootstrap.sh`, `infra/destroy.sh`, `infra/stop.sh`, `infra/start.sh` | `swb deploy/bootstrap/destroy/stop/start` |
+| `infra/sync.sh [--install]` (rsync) | `swb sync [--install]` (git push) |
+| `infra/push-env.sh` | `swb env` |
+| `infra/install-deps.sh` | `swb sync --install` |
+| `infra/ssh.sh`, `infra/connect.sh` | `swb ssh`, `swb connect` |
+| `infra/resize-data-volume.sh` | `swb resize` |
+| `scripts/run.sh`, `scripts/run-tmux.sh` | `swb run [--detach]` |
+| `scripts/status.sh`, `evaluate.sh`, `summary.sh`, `salvage_preds.sh`, `prepull.sh`, `docker_storage.sh` | `swb status/evaluate/summary/salvage/prepull/storage` |
+| `scripts/upload-results.sh`, `restore-results.sh`, `pull-results.sh` | `swb results push/restore/pull` |
 
 ## Bootstrap
 
-After `deploy.sh`, run [`./infra/bootstrap.sh`](infra/bootstrap.sh) `<stage>`. It runs [`user-data/bootstrap.sh`](user-data/bootstrap.sh) on the instance via SSM (Docker CE, uv, `/data` volume, `/opt/swe-bench` layout). Idempotent — safe to re-run.
+`./swb bootstrap <stage>` pushes [`remote/bootstrap.sh`](remote/bootstrap.sh) to the instance via SSM (the only pre-git-sync step) and runs it as root. Idempotent — but it restarts docker if storage config changed, so re-run only while idle.
 
-**Docker storage:** Docker CE uses the containerd snapshotter — image layers live under containerd `root`, not Docker `data-root`. Bootstrap configures:
+**Docker storage:** Docker CE uses the containerd snapshotter — image layers live under containerd `root`, not Docker `data-root`:
 
 | Path | Purpose |
 |------|---------|
-| `/data/containerd` | Image layers and snapshots (~300G budget for 500 Verified images) |
+| `/data/containerd` | Image layers and snapshots (~300G for 500 Verified images) |
 | `/data/docker` | Docker metadata (`daemon.json` `data-root`) |
-| `/data/swe-bench` | Repo, results, venv |
+| `/data/repo.git` | Bare git repo (push target for `swb sync`) |
+| `/opt/swe-bench` | Checked-out worktree + results (root volume) |
 
-Symlinking `/var/lib/docker` → `/data/docker` alone is **not** enough; bootstrap sets `root = "/data/containerd"` in `/etc/containerd/config.toml` before starting Docker.
+Configs are written as complete static files (no in-place editing). Device discovery excludes the root disk rather than guessing device names. A sentinel at `/var/lib/swe-bench/bootstrap.done` records the bootstrap version.
 
-Re-running `./infra/bootstrap.sh <stage>` is idempotent. If containerd was still on `/var/lib/containerd`, bootstrap points it at `/data/containerd` and removes the legacy root copy (re-run `./scripts/prepull.sh` afterward).
-
-Verifies:
-
-- `docker info` works (root and `ubuntu` via `sg docker`)
-- containerd `root` is `/data/containerd`
-- `uv` is installed
-- `/opt/swe-bench` exists
+Bootstrap also migrates instances from the old rsync layout (`/opt/swe-bench` symlink → `/data/swe-bench`): the symlink becomes a real directory and legacy `results/` + `.env` move over automatically. After verifying, `rm -rf /data/swe-bench` on the instance reclaims the space.
 
 Logs on the instance: `/var/log/swe-bench-bootstrap.log`
 
-## Fresh deploy (destroy + recreate)
+## Python toolchain (`mini-swe-runs`)
 
-Each **stage** has its own EC2 instance (`swe-bench-runner-<stage>`) and data EBS volume (`swe-bench-runner-<stage>-data`, 500 GiB by default). Destroying `qwen` does not touch `kimi`.
-
-Export results before destroy if you need them:
-
-```bash
-./scripts/pull-results.sh qwen my-run-name
-./scripts/upload-results.sh qwen my-run-name   # zip → R2 (optional)
-```
-
-```bash
-cd cloud
-./infra/destroy.sh qwen          # sst remove — deletes stack AND data volume
-./infra/deploy.sh qwen
-./infra/bootstrap.sh qwen
-./infra/push-env.sh qwen
-./infra/sync.sh qwen --install
-```
-
-`destroy.sh` uses a **triple confirm** and warns that all `/data` is lost. There is no separate volume-delete script.
-
-**Legacy volumes:** Stacks deployed before `retainOnDelete` was removed may leave an orphaned EBS volume after `sst remove`. Delete those once in the AWS console (tag `swe-bench-runner-<stage>-data`).
-
-Pause compute but keep the same instance and all data:
-
-```bash
-./infra/stop.sh qwen           # no compute charge; ~$24/mo for volume still applies
-./infra/start.sh qwen          # resume when needed
-```
-
-## Scripts
-
-Infra: `./infra/<name>.sh <stage> [...]` — provision and operate the host.
-
-| Script | Purpose |
-|--------|---------|
-| `deploy.sh` | `sst deploy` + wait for SSM |
-| `resize-data-volume.sh` | Grow data EBS volume in place + `resize2fs` on `/data` |
-| `bootstrap.sh` | Instance setup via SSM (Docker, uv, `/data`) — run after deploy |
-| `destroy.sh` | `sst remove` — deletes stack **and** data EBS volume (destructive) |
-| `stop.sh` / `start.sh` | Stop/start EC2 (instance + disk retained; no compute charge while stopped) |
-| `push-env.sh` | Copy `mini-swe-runs/.env` to instance |
-| `sync.sh` | Rsync repo → `/opt/swe-bench` (`--install` → `install-deps.sh`; `--fullsync` → enable `--delete`) |
-| `install-deps.sh` | `uv sync --frozen` on EC2 |
-| `ssh.sh` | Interactive shell as **ubuntu** via SSH over SSM (used by rsync/scp) |
-| `connect.sh` | SSM shell as **ubuntu** (no SSH key; `sudo -iu ubuntu`) |
-
-Benchmarks: `./scripts/<name>.sh <stage> [...]` — run SWE-bench on a deployed host.
-
-Where a run is referenced, pass **`RUN_NAME`** only (same as the third arg to `run.sh`, e.g. `smoke-qwen`) — not `results/...`.
-
-| Script | Purpose |
-|--------|---------|
-| `run.sh` | `<yaml-path> <RUN_NAME>` → remote `mini-swe-runs/scripts/run.sh` (foreground) |
-| `run-tmux.sh` | Same args, detached tmux session (`TMUX_SESSION` overrides session name) |
-| `prepull.sh` / `docker_storage.sh` / `status.sh` / `evaluate.sh` | Remote `mini-swe-runs/scripts/*` |
-| `summary.sh` | Remote `mini-swe-runs/scripts/summary.sh` (scorecard + status) |
-| `pull-results.sh` | `[RUN_NAME]` → rsync artifacts to laptop |
-| `upload-results.sh` | `[RUN_NAME]` → zip full `results/<RUN_NAME>/` → R2 |
-| `restore-results.sh` | `[RUN_NAME]` → download R2 archive → unzip into `results/` (resume) |
+Pinned in [`../mini-swe-runs/pyproject.toml`](../mini-swe-runs/pyproject.toml) + `uv.lock`: `mini-swe-agent==2.3.0`, `datacurve-pier`, `swebench`, `datasets`. Run scripts use `uv run`; Python **3.12** is uv-managed. `swb sync --install` runs `uv sync --frozen` on the instance.
 
 ## Secrets (`.env`)
 
-Required for runs: `QWEN_API_KEY`, `QWEN_BASE_URL` (and `KIMI_*` for kimi yamls).
+Required for runs: `QWEN_API_KEY`, `QWEN_BASE_URL` (and `KIMI_*` for kimi yamls). `.env` is gitignored and never travels with `swb sync` — push it with `swb env <stage>`.
 
-Optional for R2 upload (bucket created **out of band** in Cloudflare — not SST):
+Optional for R2 archival (bucket created out of band in Cloudflare):
 
 ```bash
 R2_ACCOUNT_ID=
@@ -194,49 +195,44 @@ R2_PREFIX=swe-bench-runs
 ```
 
 ```bash
-./scripts/upload-results.sh qwen verified-full-v2
-./scripts/upload-results.sh qwen verified-full-v2 --force   # overwrite stable archive
-./scripts/upload-results.sh qwen smoke --local              # zip + upload from laptop
+./swb results push qwen verified-full-v2
+./swb results push qwen verified-full-v2 --force    # overwrite existing archive
+./swb results push qwen smoke --local               # zip + upload from the laptop checkout
 
-# Resume on a fresh instance (after push-env + sync):
-./scripts/restore-results.sh qwen verified-full-v2
-./scripts/run-tmux.sh qwen yaml/qwen/verified-full.yaml verified-full-v2
+# Resume on a fresh instance (after sync + env):
+./swb results restore qwen verified-full-v2
+./swb run qwen yaml/qwen/verified-full.yaml verified-full-v2 --detach
 ```
 
-R2 object key (stable, per run name): `{R2_PREFIX}/{RUN_NAME}/swe-bench-{RUN_NAME}.zip`. The zip mirrors the local `results/<RUN_NAME>/` tree; restore unzips into `results/` so paths match exactly.
-
-Remote upload/restore use **AWS CLI v2** with R2 credentials from `.env` (not the instance IAM role). Bootstrap installs it automatically; upload/restore will install it on first use if missing (`cloud/scripts/lib/install-aws-cli.sh`).
+R2 object key (stable, per run name): `{R2_PREFIX}/{RUN_NAME}/swe-bench-{RUN_NAME}.zip`. R2 credentials are scoped per-invocation (`lib/r2.sh`) — they are never exported into the shell, so they can't poison real-AWS calls.
 
 ## Persistence
 
 | Action | Data on `/data`? |
 |--------|------------------|
-| EC2 **stop** / **start** | Yes (same instance, volume attached) |
-| `./infra/stop.sh <stage>` | Yes |
-| `./infra/start.sh <stage>` | Yes — resumes the stopped instance |
-| `./scripts/pull-results.sh` / `upload-results.sh` / `restore-results.sh` | Export / archive / restore copy |
-| `./infra/destroy.sh <stage>` | **No** — SST removes stack and data volume |
+| EC2 **stop** / **start** (`swb stop/start`) | Yes (same instance, volume attached) |
+| `swb results pull/push/restore` | Export / archive / restore copy |
+| `swb destroy <stage>` | **No** — SST removes stack and data volume |
+
+Results live on the **root volume** (`/opt/swe-bench/mini-swe-runs/results/`) — they survive stop/start, and `swb results push` archives them to R2 before a destroy.
 
 ## Cost (us-east-1, on-demand)
 
 - `m6i.2xlarge` ≈ **$0.38/hr** while running
-- 500 GiB gp3 ≈ **~$40/mo** while volume exists (including while instance is stopped)
-- `./infra/destroy.sh` stops volume billing by deleting the EBS volume
+- 500 GiB gp3 ≈ **~$40/mo** while volume exists (including while stopped)
+- Golden snapshot ≈ **$0.05/GB-mo** of actual data (one-time, shared by all stages)
+- `swb destroy` stops volume billing
 
 ## Debugging
 
 ```bash
-./infra/ssh.sh qwen
-cd /opt/swe-bench/mini-swe-runs
-./scripts/docker_storage.sh          # containerd root, / vs /data headroom
-./scripts/status.sh qwen-june
-uv run pier --help
+./swb ready qwen                  # readiness + deployed SHA + image count
+./swb storage qwen                # containerd root, / vs /data headroom
+./swb status qwen smoke-qwen
+./swb summary qwen smoke-qwen
 
-# Or from laptop:
-./scripts/docker_storage.sh qwen
-./scripts/status.sh qwen smoke-qwen
-./scripts/summary.sh qwen smoke-qwen
-# Claude Code (install once on instance): curl -fsSL https://claude.ai/install.sh | bash
+./swb ssh qwen                    # land in mini-swe-runs/
+tail -f results/<RUN_NAME>/minisweagent.log
 ```
 
 Bootstrap log on the instance: `/var/log/swe-bench-bootstrap.log`
@@ -245,21 +241,19 @@ Bootstrap log on the instance: `/var/log/swe-bench-bootstrap.log`
 
 If a full run ends with mass `docker run` exit **125** and hundreds of **empty patches** in `preds.json` (infrastructure failures, not model quality):
 
-1. Re-bootstrap to fix storage: `./infra/bootstrap.sh <stage>` (containerd on `/data`; legacy root images are dropped)
+1. Re-bootstrap to fix storage: `./swb bootstrap <stage>`
 2. On the instance, remove empty-patch entries from `preds.json` (keep successes; do **not** use `--redo-existing` unless you want to redo all 500)
-3. Pre-pull: `./scripts/prepull.sh <stage>`
-4. Re-run agent: `./scripts/run-tmux.sh <stage> <yaml> <RUN_NAME>`
-5. Re-evaluate: `./scripts/evaluate.sh <stage> <RUN_NAME>`
+3. Warm the cache if needed: `./swb prepull <stage>`
+4. Re-run agent: `./swb run <stage> <yaml> <RUN_NAME> --detach`
+5. Re-evaluate: `./swb evaluate <stage> <RUN_NAME>`
 
 ## SST only
 
 ```bash
 cd cloud
 export AWS_REGION=us-east-1
-npx sst deploy --stage qwen
+npx sst deploy --stage qwen      # set DATA_SNAPSHOT_ID / DATA_VOLUME_GB as needed
 npx sst remove --stage qwen
 ```
 
-`npx sst remove` deletes the data volume (same as `./infra/destroy.sh`). Non-`prod` stages use `removal: remove` in `sst.config.ts`; a `prod` stage retains the whole stack on remove.
-
-Outputs include `instanceId`, `instancePublicIp`, `dataVolumeId`, `repoPath`, `miniSweRunsPath`.
+Non-`prod` stages use `removal: remove` in `sst.config.ts`; a `prod` stage retains the whole stack on remove. Outputs include `instanceId`, `instancePublicIp`, `dataVolumeId`, `dataSnapshotId`, `repoPath`, `miniSweRunsPath`.

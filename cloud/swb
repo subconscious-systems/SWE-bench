@@ -1,0 +1,594 @@
+#!/usr/bin/env bash
+# swb — single CLI for the SWE-bench cloud runner.
+#
+# Lifecycle:    deploy, bootstrap, sync, env, stop, start, destroy
+# Benchmarks:   run, status, evaluate, summary, salvage, prepull, storage
+# Results:      results push|pull|restore
+# Golden image: snapshot-data (then DATA_SNAPSHOT_ID/.snapshot-id feeds deploy)
+# Access:       ssh, connect
+# Maintenance:  resize, ready
+#
+# Run `swb help` for usage.
+set -euo pipefail
+
+SWB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SWB_DIR/lib/common.sh"
+# shellcheck source=lib/ssh.sh
+source "$SWB_DIR/lib/ssh.sh"
+# shellcheck source=lib/ssm.sh
+source "$SWB_DIR/lib/ssm.sh"
+
+usage() {
+  cat <<'EOF'
+usage: swb <command> <stage> [args...]
+
+lifecycle
+  deploy <stage>                    provision/update via SST; new stages use the
+                                    golden data snapshot (DATA_SNAPSHOT_ID, or
+                                    cloud/.snapshot-id; DATA_SNAPSHOT_ID=none skips)
+  bootstrap <stage>                 idempotent instance setup via SSM (safe to re-run when idle)
+  sync <stage> [commit-ish] [--install]
+                                    git push a commit (default: HEAD) and check it out
+                                    on the instance; --install also runs uv sync --frozen
+  env <stage> [--dry-run|--diff]    push mini-swe-runs/.env to the instance
+  stop|start <stage>                stop/start the EC2 instance (volume persists)
+  destroy <stage>                   permanently delete the stage (triple confirm)
+
+benchmarks (thin wrappers over mini-swe-runs/scripts/* on the instance)
+  run <stage> <yaml> <RUN_NAME> [--detach]
+                                    run a benchmark; --detach runs in tmux
+  status <stage> [RUN_NAME] [resume_epoch]
+  evaluate <stage> [RUN_NAME] [args...]
+  summary <stage> [RUN_NAME]
+  salvage <stage> [RUN_NAME]
+  prepull <stage> [count]           optional: pre-pull eval images (golden stage only;
+                                    other stages get images from the snapshot + lazy pull)
+  storage <stage> [args...]         docker storage report
+
+results
+  results push <stage> <RUN_NAME> [--force] [--local]     zip + upload to R2
+  results restore <stage> <RUN_NAME> [--force] [--local]  download + unzip from R2
+  results pull <stage> <RUN_NAME> [--logs] [--trajectories]
+                                    copy results to the laptop over SSH
+
+golden image
+  snapshot-data <stage>             freeze /data, snapshot the volume, record the
+                                    snapshot id in cloud/.snapshot-id
+
+access & maintenance
+  ssh <stage>                       interactive shell (SSH over SSM)
+  connect <stage>                   SSM session (no SSH key path)
+  ready <stage>                     run readiness checks
+  resize <stage> <SIZE_GB>          grow the data volume + filesystem
+EOF
+  exit "${1:-0}"
+}
+
+# ---------------------------------------------------------------- helpers ---
+
+# Run a mini-swe-runs script on the instance: remote_msr <script.sh> [args...]
+remote_msr() {
+  local script="$1"
+  shift
+  local q="" a
+  for a in "$@"; do q+=" $(printf '%q' "$a")"; done
+  ssh_cmd "cd $(printf '%q' "$MINI_SWE_RUNS_PATH") && ./scripts/${script}${q}"
+}
+
+# ----------------------------------------------------------------- deploy ---
+
+cmd_deploy() {
+  require_aws
+  echo "Deploying swe-bench-runner ($(cloud_print_context))..."
+
+  local snap="${DATA_SNAPSHOT_ID:-}"
+  if runner_stack_exists; then
+    # snapshotId only matters at volume creation (runner.ts ignores changes after).
+    [[ -n "$snap" ]] && echo "note: stage exists — DATA_SNAPSHOT_ID has no effect on the existing volume"
+    snap=""
+  elif [[ -z "$snap" && -f "$SNAPSHOT_ID_FILE" ]]; then
+    snap="$(<"$SNAPSHOT_ID_FILE")"
+    echo "using golden data snapshot $snap (from cloud/.snapshot-id; DATA_SNAPSHOT_ID=none to skip)"
+  fi
+  [[ "$snap" == "none" ]] && snap=""
+
+  local volume_gb="${DATA_VOLUME_GB:-500}"
+  if [[ -n "$snap" ]]; then
+    local state size
+    read -r state size < <(aws ec2 describe-snapshots --snapshot-ids "$snap" \
+      --query 'Snapshots[0].[State,VolumeSize]' --output text 2>/dev/null) || true
+    if [[ "${state:-}" != "completed" ]]; then
+      echo "error: snapshot $snap not found or not completed (state: ${state:-unknown})" >&2
+      exit 1
+    fi
+    if [[ "$size" -gt "$volume_gb" ]]; then
+      echo "note: DATA_VOLUME_GB raised $volume_gb -> $size (snapshot size)"
+      volume_gb="$size"
+    fi
+    echo "new data volume from snapshot $snap (${volume_gb} GiB) — prepull not needed"
+  fi
+
+  (
+    cd "$CLOUD_DIR"
+    npm install --silent 2>/dev/null || npm install
+    DATA_SNAPSHOT_ID="$snap" DATA_VOLUME_GB="$volume_gb" npx sst deploy --stage "$STAGE"
+  )
+
+  local instance_id
+  instance_id="$(get_instance_id)"
+  echo
+  echo "Instance: $instance_id"
+  echo "Waiting for SSM ..."
+  wait_for_ssm "$instance_id"
+
+  echo
+  echo "Stack deployed. Next:"
+  echo "  swb bootstrap $STAGE"
+  echo "  swb sync $STAGE --install"
+  echo "  swb env $STAGE"
+  echo "  swb run $STAGE yaml/{qwen,kimi}/smoke.yaml smoke-{qwen,kimi} --detach"
+}
+
+cmd_bootstrap() {
+  require_aws
+  local instance_id
+  instance_id="$(get_instance_id)"
+  echo "Bootstrap on $instance_id (stage=$STAGE) ..."
+  ssm_run_script "$instance_id" "swe-bench bootstrap ($STAGE)" "$CLOUD_DIR/remote/bootstrap.sh"
+  echo "Readiness check ..."
+  ssm_run_script "$instance_id" "swe-bench readiness ($STAGE)" "$CLOUD_DIR/remote/ready.sh"
+  echo "Bootstrap OK."
+}
+
+cmd_ready() {
+  require_aws
+  local instance_id
+  instance_id="$(get_instance_id)"
+  ssm_run_script "$instance_id" "swe-bench readiness ($STAGE)" "$CLOUD_DIR/remote/ready.sh"
+}
+
+# ------------------------------------------------------------------- sync ---
+
+cmd_sync() {
+  local commit="HEAD" install=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --install) install=1 ;;
+      -*) echo "unknown flag: $arg" >&2; exit 1 ;;
+      *) commit="$arg" ;;
+    esac
+  done
+
+  local sha short
+  sha="$(git -C "$REPO_ROOT" rev-parse --verify --quiet "${commit}^{commit}" || true)"
+  if [[ -z "$sha" ]]; then
+    echo "error: cannot resolve commit: $commit" >&2
+    exit 1
+  fi
+  short="${sha:0:12}"
+  if [[ -n "$(git -C "$REPO_ROOT" status --porcelain)" ]]; then
+    echo "warning: working tree is dirty — uncommitted changes will NOT deploy (deploying commit $short)" >&2
+  fi
+
+  require_aws
+  ssh_prepare
+  echo "Pushing $short -> $STAGE (${REMOTE_GIT_DIR}) ..."
+  GIT_SSH_COMMAND="$(swb_git_ssh_command)" \
+    git -C "$REPO_ROOT" push --force \
+    "ssh://${REMOTE_USER}@${CLOUD_SSH_INSTANCE_ID}${REMOTE_GIT_DIR}" \
+    "${sha}:refs/heads/deploy"
+
+  # Explicit checkout (instead of a hook): deterministic, and re-applies even
+  # when the push was "Everything up-to-date". Untracked instance files
+  # (results/, eval logs/, .venv, .env) are untouched.
+  local remote_cmd
+  remote_cmd="set -euo pipefail
+GIT_WORK_TREE=$REPO_PATH git --git-dir=$REMOTE_GIT_DIR checkout -f $sha
+echo $sha > $REPO_PATH/.deployed-sha
+echo \"deployed: $sha\""
+  if [[ "$install" == 1 ]]; then
+    remote_cmd+="
+cd $MINI_SWE_RUNS_PATH
+export PATH=/usr/local/bin:/home/ubuntu/.local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+uv sync --frozen
+echo 'deps: uv sync --frozen OK'"
+  fi
+  ssh_cmd "$remote_cmd"
+}
+
+# -------------------------------------------------------------------- env ---
+
+cmd_env() {
+  local env_local="$REPO_ROOT/mini-swe-runs/.env"
+  local remote_env="$MINI_SWE_RUNS_PATH/.env"
+  local dry_run=0 diff_keys=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) dry_run=1 ;;
+      --diff) diff_keys=1 ;;
+      *) echo "unknown flag: $arg" >&2; exit 1 ;;
+    esac
+  done
+
+  [[ -f "$env_local" ]] || {
+    echo "error: $env_local not found (cp mini-swe-runs/.env.example .env and fill in keys)" >&2
+    exit 1
+  }
+  require_aws
+
+  if [[ "$diff_keys" == 1 ]]; then
+    echo "Local keys:"
+    grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$env_local" | cut -d= -f1 | sort
+    echo "Remote keys:"
+    ssh_cmd "grep -E '^[A-Za-z_][A-Za-z0-9_]*=' '$remote_env' 2>/dev/null | cut -d= -f1 | sort" || echo "(no remote .env)"
+    return 0
+  fi
+  if [[ "$dry_run" == 1 ]]; then
+    echo "Would copy $env_local -> $remote_env"
+    return 0
+  fi
+
+  echo "Uploading .env to $remote_env ..."
+  ssh_upload_file "$env_local" "$remote_env"
+  ssh_cmd "test -f '$remote_env' && grep -qE '^(QWEN_API_KEY|OPENAI_API_KEY)=.' '$remote_env'"
+  echo "Pushed .env to $remote_env (API key present)."
+}
+
+# -------------------------------------------------------------- benchmarks ---
+
+cmd_run() {
+  local detach=0 positional=() arg
+  for arg in "$@"; do
+    case "$arg" in
+      --detach) detach=1 ;;
+      -*) echo "unknown flag: $arg" >&2; exit 1 ;;
+      *) positional+=("$arg") ;;
+    esac
+  done
+  local yaml_path="${positional[0]:-}" run_name="${positional[1]:-}"
+  [[ -n "$yaml_path" && -n "$run_name" ]] || {
+    echo "usage: swb run <stage> <yaml-path> <RUN_NAME> [--detach]" >&2
+    exit 1
+  }
+  cloud_parse_run_name "$run_name"
+  require_aws
+
+  local run_cmd
+  run_cmd="./scripts/run.sh $(printf '%q' "$yaml_path") $(printf '%q' "$RUN_NAME")"
+  echo "Remote: cd $MINI_SWE_RUNS_PATH && $run_cmd"
+  echo "Log on instance: tail -f $MINI_SWE_RUNS_PATH/results/$RUN_NAME/minisweagent.log"
+  echo
+
+  if [[ "$detach" == 0 ]]; then
+    ssh_cmd "cd '$MINI_SWE_RUNS_PATH' && bash -lc $(printf '%q' "$run_cmd")"
+    return
+  fi
+
+  local session="${TMUX_SESSION:-swebench-$RUN_NAME}"
+  # Keep tmux alive after run.sh exits so attach + scrollback still work.
+  local tmux_cmd="cd '$MINI_SWE_RUNS_PATH' && $run_cmd; exec bash"
+  ssh_cmd "cd '$MINI_SWE_RUNS_PATH' && \
+    (tmux has-session -t '$session' 2>/dev/null && tmux kill-session -t '$session' || true) && \
+    tmux new-session -d -s '$session' bash -lc $(printf '%q' "$tmux_cmd") && \
+    echo 'Started in tmux session:' '$session' && \
+    echo 'Attach: swb ssh $STAGE  # tmux attach -t $session'"
+}
+
+cmd_status() {
+  require_aws
+  cloud_parse_run_name "${1:-}"
+  shift || true
+  remote_msr status.sh "$RUN_NAME" "$@"
+}
+
+cmd_evaluate() {
+  require_aws
+  if [[ $# -eq 0 ]]; then
+    remote_msr evaluate.sh
+    return
+  fi
+  cloud_parse_run_name "$1"
+  shift
+  remote_msr evaluate.sh "$RUN_NAME" "$@"
+}
+
+cmd_summary() {
+  require_aws
+  cloud_parse_run_name "${1:-}"
+  remote_msr summary.sh "$RUN_NAME"
+}
+
+cmd_salvage() {
+  require_aws
+  cloud_parse_run_name "${1:-}"
+  remote_msr salvage_preds.sh "$RUN_NAME"
+}
+
+cmd_prepull() {
+  require_aws
+  remote_msr prepull.sh "$@"
+}
+
+cmd_storage() {
+  require_aws
+  remote_msr docker_storage.sh "$@"
+}
+
+# ---------------------------------------------------------------- results ---
+
+cmd_results() {
+  local sub="$1"
+  shift
+  case "$sub" in
+    push|restore) cmd_results_transfer "$sub" "$@" ;;
+    pull) cmd_results_pull "$@" ;;
+    *) echo "usage: swb results <push|pull|restore> <stage> <RUN_NAME> [flags]" >&2; exit 1 ;;
+  esac
+}
+
+cmd_results_transfer() {
+  local sub="$1"
+  shift
+  local run_name_arg="" local_mode=0 force=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --local) local_mode=1 ;;
+      --force) force=1 ;;
+      -*) echo "unknown flag: $arg" >&2; exit 1 ;;
+      *)
+        [[ -z "$run_name_arg" ]] || { echo "extra arg: $arg" >&2; exit 1; }
+        run_name_arg="$arg"
+        ;;
+    esac
+  done
+  cloud_parse_run_name "${run_name_arg:-}"
+
+  local force_flag=""
+  [[ "$force" == 1 ]] && force_flag=" --force"
+
+  if [[ "$local_mode" == 1 ]]; then
+    # shellcheck disable=SC2086
+    bash "$CLOUD_DIR/remote/results.sh" "$sub" "$RUN_NAME" $force_flag
+    return
+  fi
+  require_aws
+  ssh_cmd "bash '$REPO_PATH/cloud/remote/results.sh' $(printf '%q' "$sub") $(printf '%q' "$RUN_NAME")$force_flag"
+}
+
+cmd_results_pull() {
+  local run_name_arg="" traj=0 logs=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --trajectories) traj=1 ;;
+      --logs) logs=1 ;;
+      -*) echo "unknown flag: $arg" >&2; exit 1 ;;
+      *)
+        [[ -z "$run_name_arg" ]] || { echo "extra arg: $arg" >&2; exit 1; }
+        run_name_arg="$arg"
+        ;;
+    esac
+  done
+  cloud_parse_run_name "${run_name_arg:-}"
+  require_aws
+
+  local local_dir="$REPO_ROOT/mini-swe-runs/results/$RUN_NAME"
+  local remote_base="$MINI_SWE_RUNS_PATH/results/$RUN_NAME"
+  mkdir -p "$local_dir"
+  echo "Pulling $RUN_NAME -> $local_dir"
+
+  ssh_cmd "bash -s" "$remote_base" <<'TAR' | tar xzf - -C "$local_dir" 2>/dev/null || true
+set -euo pipefail
+D="$1"
+cd "$D"
+shopt -s nullglob
+TO_TAR=(preds.json minisweagent.log exit_statuses_*.yaml *.json)
+[[ ${#TO_TAR[@]} -gt 0 ]] || exit 0
+tar czf - "${TO_TAR[@]}"
+TAR
+
+  if [[ "$logs" == 1 ]]; then
+    echo "Pulling logs/ ..."
+    ssh_cmd "cd '$remote_base' && { [ -d logs ] && tar czf - logs || true; }" \
+      | tar xzf - -C "$local_dir" 2>/dev/null || true
+  fi
+
+  if [[ "$traj" == 1 ]]; then
+    echo "Pulling trajectories ..."
+    ssh_cmd "cd '$remote_base' && find . -name '*.traj.json' -print0 | tar czf - --null -T -" \
+      | tar xzf - -C "$local_dir" 2>/dev/null || true
+  fi
+
+  echo "Done: $local_dir"
+}
+
+# ---------------------------------------------------------- snapshot-data ---
+
+cmd_snapshot_data() {
+  require_aws
+  local instance_id volume_id
+  instance_id="$(get_instance_id)"
+  volume_id="$(get_data_volume_id)"
+
+  echo "Golden data snapshot for stage '$STAGE' ($(cloud_print_context))"
+  echo "  instance: $instance_id"
+  echo "  volume:   $volume_id"
+  echo
+  echo "This STOPS docker/containerd and freezes /data for a few seconds."
+  echo "Do not run while a benchmark is active."
+  read -r -p "Continue? [y/N] " ans
+  case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted."; exit 0 ;; esac
+
+  echo "Quiescing docker and freezing /data ..."
+  ssh_cmd "sudo systemctl stop docker docker.socket containerd && sync && sudo fsfreeze -f /data && echo '/data frozen'"
+
+  echo "Creating snapshot (point-in-time is the API call; /data unfreezes right after) ..."
+  local snap=""
+  if ! snap="$(aws ec2 create-snapshot \
+    --volume-id "$volume_id" \
+    --description "swe-bench golden data ($STAGE) $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --tag-specifications "ResourceType=snapshot,Tags=[{Key=Name,Value=swe-bench-golden-data},{Key=swe-bench-source-stage,Value=$STAGE}]" \
+    --query SnapshotId --output text)"; then
+    echo "error: create-snapshot failed; unfreezing /data" >&2
+    ssh_cmd "sudo fsfreeze -u /data; sudo systemctl start containerd docker" || true
+    exit 1
+  fi
+
+  echo "Unfreezing /data and restarting docker ..."
+  ssh_cmd "sudo fsfreeze -u /data && sudo systemctl start containerd docker && echo 'docker back up'"
+
+  echo "Snapshot $snap created; waiting for completion (background copy to S3, can take a while) ..."
+  local i state progress
+  for i in $(seq 1 360); do
+    read -r state progress < <(aws ec2 describe-snapshots --snapshot-ids "$snap" \
+      --query 'Snapshots[0].[State,Progress]' --output text 2>/dev/null) || true
+    if [[ "${state:-}" == "completed" ]]; then
+      break
+    fi
+    if [[ "${state:-}" == "error" ]]; then
+      echo "error: snapshot $snap failed" >&2
+      exit 1
+    fi
+    printf '\r  %s (%s) attempt %d/360' "${state:-pending}" "${progress:-0%}" "$i"
+    sleep 15
+  done
+  echo
+  if [[ "${state:-}" != "completed" ]]; then
+    echo "warning: snapshot still ${state:-pending} after 90m — check later with:" >&2
+    echo "  aws ec2 describe-snapshots --snapshot-ids $snap" >&2
+  fi
+
+  echo "$snap" > "$SNAPSHOT_ID_FILE"
+  echo
+  echo "Golden snapshot: $snap (saved to cloud/.snapshot-id)"
+  echo "New stages will use it automatically:  swb deploy <new-stage>"
+}
+
+# ------------------------------------------------------------- maintenance ---
+
+cmd_resize() {
+  local target_gb="${1:-500}"
+  if [[ ! "$target_gb" =~ ^[0-9]+$ ]] || [[ "$target_gb" -lt 1 ]]; then
+    echo "error: SIZE_GB must be a positive integer (got: $target_gb)" >&2
+    exit 1
+  fi
+  require_aws
+  local instance_id volume_id current_gb
+  instance_id="$(get_instance_id)"
+  volume_id="$(get_data_volume_id)"
+  current_gb="$(aws ec2 describe-volumes --volume-ids "$volume_id" \
+    --query 'Volumes[0].Size' --output text)"
+
+  echo "stage=$STAGE instance=$instance_id volume=$volume_id"
+  echo "current size: ${current_gb} GiB -> target: ${target_gb} GiB"
+
+  if [[ "$current_gb" -ge "$target_gb" ]]; then
+    echo "volume already >= ${target_gb} GiB; extending filesystem only if needed ..."
+  else
+    echo "Modifying EBS volume ..."
+    aws ec2 modify-volume --volume-id "$volume_id" --size "$target_gb" --output text >/dev/null
+    echo "Waiting for volume modification ..."
+    local _i state
+    for _i in $(seq 1 120); do
+      state="$(aws ec2 describe-volumes-modifications --volume-ids "$volume_id" \
+        --query 'VolumesModifications[0].ModificationState' --output text 2>/dev/null || echo optimizing)"
+      case "$state" in
+        completed|optimizing) break ;;
+        failed) echo "error: volume modification failed" >&2; exit 1 ;;
+      esac
+      sleep 5
+    done
+  fi
+
+  echo "Extending ext4 on instance ..."
+  # shellcheck disable=SC2016  # $src expands on the instance, not here
+  ssh_cmd 'set -euo pipefail; src="$(findmnt -n -o SOURCE /data)"; echo "--- before ---"; df -h /data; sudo resize2fs "$src"; echo "--- after ---"; df -h /data'
+  echo "Done."
+}
+
+# ----------------------------------------------------------------- access ---
+
+cmd_ssh() {
+  require_aws
+  ssh_interactive -t "cd $MINI_SWE_RUNS_PATH 2>/dev/null || cd ~; exec bash -l"
+}
+
+cmd_connect() {
+  require_aws
+  require_ssm_plugin
+  local instance_id
+  instance_id="$(get_instance_id)"
+  local cmd="sudo -iu ubuntu bash -lc 'cd \"${MINI_SWE_RUNS_PATH}\" 2>/dev/null || cd ~; exec bash -l'"
+  exec aws ssm start-session \
+    --target "$instance_id" \
+    --document-name AWS-StartInteractiveCommand \
+    --parameters "command=${cmd}"
+}
+
+cmd_stop() {
+  require_aws
+  local instance_id
+  instance_id="$(get_instance_id)"
+  aws ec2 stop-instances --instance-ids "$instance_id" --output text
+  echo "Stopping $instance_id (EBS data persists; no compute charge while stopped)"
+}
+
+cmd_start() {
+  require_aws
+  local instance_id
+  instance_id="$(get_instance_id)"
+  aws ec2 start-instances --instance-ids "$instance_id" --output text
+  echo "Starting $instance_id..."
+  aws ec2 wait instance-running --instance-ids "$instance_id"
+  wait_for_ssm "$instance_id" || true
+  echo "Instance running. SSM/SSH should be available shortly."
+}
+
+cmd_destroy() {
+  require_aws
+  if ! runner_stack_exists; then
+    echo "Nothing to destroy for stage $STAGE (no active EC2 stack)." >&2
+    echo "If an orphaned data volume remains from an older deploy, delete it in the AWS console." >&2
+    exit 1
+  fi
+  cloud_confirm_destroy
+  echo
+  echo "Removing SST stack (instance + data volume) ..."
+  (
+    cd "$CLOUD_DIR"
+    npm install --silent 2>/dev/null || true
+    npx sst remove --stage "$STAGE"
+  )
+  echo
+  echo "Stack removed. EC2 instance and data volume swe-bench-runner-${STAGE}-data are deleted."
+}
+
+# --------------------------------------------------------------- dispatch ---
+
+[[ $# -ge 1 ]] || usage 1
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+  help|-h|--help) usage 0 ;;
+  results)
+    [[ $# -ge 2 ]] || { echo "usage: swb results <push|pull|restore> <stage> <RUN_NAME> [flags]" >&2; exit 1; }
+    SUB="$1"
+    shift
+    cloud_parse_stage "${1:-}"
+    shift
+    cmd_results "$SUB" "$@"
+    ;;
+  deploy|bootstrap|ready|sync|env|run|status|evaluate|summary|salvage|prepull|storage|snapshot-data|resize|ssh|connect|stop|start|destroy)
+    cloud_parse_stage "${1:-}"
+    shift
+    case "$COMMAND" in
+      snapshot-data) cmd_snapshot_data "$@" ;;
+      *) "cmd_${COMMAND}" "$@" ;;
+    esac
+    ;;
+  *)
+    echo "error: unknown command: $COMMAND" >&2
+    usage 1
+    ;;
+esac
