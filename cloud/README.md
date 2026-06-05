@@ -98,7 +98,7 @@ After `deploy.sh`, run [`./infra/bootstrap.sh`](infra/bootstrap.sh) `<stage>`. I
 
 Symlinking `/var/lib/docker` → `/data/docker` alone is **not** enough; bootstrap sets `root = "/data/containerd"` in `/etc/containerd/config.toml` before starting Docker.
 
-Re-running `./infra/bootstrap.sh <stage>` on an existing host **auto-migrates** `/var/lib/containerd` → `/data/containerd` (rsync) and reclaims root disk when images verify.
+Re-running `./infra/bootstrap.sh <stage>` is idempotent. If containerd was still on `/var/lib/containerd`, bootstrap points it at `/data/containerd` and removes the legacy root copy (re-run `./scripts/prepull.sh` afterward).
 
 Verifies:
 
@@ -229,7 +229,7 @@ Bootstrap log on the instance: `/var/log/swe-bench-bootstrap.log`
 
 If a full run ends with mass `docker run` exit **125** and hundreds of **empty patches** in `preds.json` (infrastructure failures, not model quality):
 
-1. Re-bootstrap to fix storage: `./infra/bootstrap.sh <stage>` (migrates containerd to `/data`)
+1. Re-bootstrap to fix storage: `./infra/bootstrap.sh <stage>` (containerd on `/data`; legacy root images are dropped)
 2. On the instance, remove empty-patch entries from `preds.json` (keep successes; do **not** use `--redo-existing` unless you want to redo all 500)
 3. Pre-pull: `./scripts/prepull.sh <stage>`
 4. Re-run agent: `./scripts/run-tmux.sh <stage> <yaml> <RUN_NAME>`

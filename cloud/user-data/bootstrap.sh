@@ -54,13 +54,8 @@ print(m.group(1) if m else "")
 PY
 }
 
-dir_has_content() {
-  local d="$1"
-  [[ -d "$d" ]] && [[ -n "$(ls -A "$d" 2>/dev/null || true)" ]]
-}
-
 configure_containerd_on_data() {
-  local current_root migrated=0
+  local current_root
 
   if [[ ! -f /etc/containerd/config.toml ]]; then
     log "generate /etc/containerd/config.toml"
@@ -77,14 +72,9 @@ configure_containerd_on_data() {
   stop_docker_stack
   mkdir -p "$CONTAINERD_ROOT"
 
-  if dir_has_content "$OLD_CONTAINERD_ROOT" && ! dir_has_content "$CONTAINERD_ROOT"; then
-    if [[ -L "$OLD_CONTAINERD_ROOT" ]]; then
-      log "warn: $OLD_CONTAINERD_ROOT is a symlink; skipping rsync"
-    else
-      log "migrate containerd data: $OLD_CONTAINERD_ROOT -> $CONTAINERD_ROOT"
-      rsync -aHX "$OLD_CONTAINERD_ROOT/" "$CONTAINERD_ROOT/"
-      migrated=1
-    fi
+  if [[ -d "$OLD_CONTAINERD_ROOT" && ! -L "$OLD_CONTAINERD_ROOT" ]]; then
+    log "remove legacy containerd data on $OLD_CONTAINERD_ROOT (re-pull images after bootstrap)"
+    rm -rf "$OLD_CONTAINERD_ROOT"
   fi
 
   python3 - "$CONTAINERD_ROOT" <<'PY'
@@ -100,22 +90,7 @@ open(path, "w").write(text)
 PY
 
   start_docker_stack
-
   docker info >/dev/null
-  local images_before
-  images_before="$(docker images -q 2>/dev/null | wc -l | tr -d ' ')"
-
-  if [[ "$migrated" -eq 1 ]]; then
-    if [[ "$images_before" -gt 0 ]]; then
-      log "migration ok: $images_before docker images visible"
-      if [[ -d "$OLD_CONTAINERD_ROOT" && ! -L "$OLD_CONTAINERD_ROOT" ]]; then
-        log "reclaim root disk: rm -rf $OLD_CONTAINERD_ROOT"
-        rm -rf "$OLD_CONTAINERD_ROOT"
-      fi
-    else
-      log "warn: migration finished but docker images list is empty — keeping $OLD_CONTAINERD_ROOT"
-    fi
-  fi
 
   du -sh "$CONTAINERD_ROOT" "$DOCKER_DATA_ROOT" 2>/dev/null || true
   df -h / /data
