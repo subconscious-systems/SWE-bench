@@ -40,5 +40,7 @@ model:
     top_p: 0.95
     drop_params: true
     parallel_tool_calls: true
-    # st_buffer_size: 5  # for brantree.cpp, this is a server spin up flag
+    chat_template_kwargs:
+      subtask_buffer_size: 5
+      min_subtask_length: 3
     api_base: ${SPARK_BASE_URL}
