@@ -191,8 +191,8 @@ DATA_DEV="$(wait_for_data_device)" || {
   exit 1
 }
 
-# Snapshot-derived volumes already carry ext4 (and ~300GB of docker images) —
-# the blkid guard preserves them; only blank volumes get formatted.
+# Only format a blank volume; the blkid guard preserves an existing filesystem
+# (and its cached docker images) on re-bootstrap or stop/start reattach.
 if ! blkid "$DATA_DEV" | grep -q ext4; then
   log "format $DATA_DEV"
   mkfs.ext4 -F "$DATA_DEV"

@@ -14,8 +14,6 @@ REMOTE_USER="${REMOTE_USER:-ubuntu}"
 REPO_PATH="${REPO_PATH:-/opt/swe-bench}"
 MINI_SWE_RUNS_PATH="${MINI_SWE_RUNS_PATH:-$REPO_PATH/mini-swe-runs}"
 REMOTE_GIT_DIR="${REMOTE_GIT_DIR:-/data/repo.git}"
-# shellcheck disable=SC2034
-SNAPSHOT_ID_FILE="$CLOUD_DIR/.snapshot-id"
 
 export AWS_REGION
 export AWS_DEFAULT_REGION="$AWS_REGION"

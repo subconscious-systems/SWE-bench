@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # swb — single CLI for the SWE-bench cloud runner.
 #
-# Lifecycle:    deploy, bootstrap, sync, env, stop, start, destroy
+# Lifecycle:    deploy, bootstrap, sync, env, docker-login, stop, start, destroy
 # Benchmarks:   run, status, evaluate, summary, salvage, prepull, storage
 # Results:      results push|pull|restore
-# Golden image: snapshot-data (then DATA_SNAPSHOT_ID/.snapshot-id feeds deploy)
 # Access:       ssh, connect
 # Maintenance:  resize, ready
+#
+# Eval images pull on demand from Docker Hub (authenticated via `swb env` /
+# `swb docker-login`); `swb prepull` is an optional warm-up.
 #
 # Run `swb help` for usage.
 set -euo pipefail
@@ -24,14 +26,13 @@ usage() {
 usage: swb <command> <stage> [args...]
 
 lifecycle
-  deploy <stage>                    provision/update via SST; new stages use the
-                                    golden data snapshot (DATA_SNAPSHOT_ID, or
-                                    cloud/.snapshot-id; DATA_SNAPSHOT_ID=none skips)
+  deploy <stage>                    provision/update via SST (blank data volume)
   bootstrap <stage>                 idempotent instance setup via SSM (safe to re-run when idle)
   sync <stage> [commit-ish] [--install]
                                     git push a commit (default: HEAD) and check it out
                                     on the instance; --install also runs uv sync --frozen
-  env <stage> [--dry-run|--diff]    push mini-swe-runs/.env to the instance
+  env <stage> [--dry-run|--diff]    push mini-swe-runs/.env + docker login on the instance
+  docker-login <stage>              (re-)authenticate the instance to Docker Hub from .env
   stop|start <stage>                stop/start the EC2 instance (volume persists)
   destroy <stage>                   permanently delete the stage (triple confirm)
 
@@ -42,8 +43,8 @@ benchmarks (thin wrappers over mini-swe-runs/scripts/* on the instance)
   evaluate <stage> [RUN_NAME] [args...]
   summary <stage> [RUN_NAME]
   salvage <stage> [RUN_NAME]
-  prepull <stage> [count]           optional: pre-pull eval images (golden stage only;
-                                    other stages get images from the snapshot + lazy pull)
+  prepull <stage> [count]           optional warm-up: pre-pull eval images (otherwise
+                                    they pull on demand during the run)
   storage <stage> [args...]         docker storage report
 
 results
@@ -51,10 +52,6 @@ results
   results restore <stage> <RUN_NAME> [--force] [--local]  download + unzip from R2
   results pull <stage> <RUN_NAME> [--logs] [--trajectories]
                                     copy results to the laptop over SSH
-
-golden image
-  snapshot-data <stage>             freeze /data, snapshot the volume, record the
-                                    snapshot id in cloud/.snapshot-id
 
 access & maintenance
   ssh <stage>                       interactive shell (SSH over SSM)
@@ -97,37 +94,10 @@ cmd_deploy() {
   require_aws
   echo "Deploying swe-bench-runner ($(cloud_print_context))..."
 
-  local snap="${DATA_SNAPSHOT_ID:-}"
-  if runner_stack_exists; then
-    # snapshotId only matters at volume creation (runner.ts ignores changes after).
-    [[ -n "$snap" ]] && echo "note: stage exists — DATA_SNAPSHOT_ID has no effect on the existing volume"
-    snap=""
-  elif [[ -z "$snap" && -f "$SNAPSHOT_ID_FILE" ]]; then
-    snap="$(<"$SNAPSHOT_ID_FILE")"
-    echo "using golden data snapshot $snap (from cloud/.snapshot-id; DATA_SNAPSHOT_ID=none to skip)"
-  fi
-  [[ "$snap" == "none" ]] && snap=""
-
-  local volume_gb="${DATA_VOLUME_GB:-500}"
-  if [[ -n "$snap" ]]; then
-    local state size
-    read -r state size < <(aws ec2 describe-snapshots --snapshot-ids "$snap" \
-      --query 'Snapshots[0].[State,VolumeSize]' --output text 2>/dev/null) || true
-    if [[ "${state:-}" != "completed" ]]; then
-      echo "error: snapshot $snap not found or not completed (state: ${state:-unknown})" >&2
-      exit 1
-    fi
-    if [[ "$size" -gt "$volume_gb" ]]; then
-      echo "note: DATA_VOLUME_GB raised $volume_gb -> $size (snapshot size)"
-      volume_gb="$size"
-    fi
-    echo "new data volume from snapshot $snap (${volume_gb} GiB) — prepull not needed"
-  fi
-
   (
     cd "$CLOUD_DIR"
     npm install --silent 2>/dev/null || npm install
-    DATA_SNAPSHOT_ID="$snap" DATA_VOLUME_GB="$volume_gb" npx sst deploy --stage "$STAGE"
+    DATA_VOLUME_GB="${DATA_VOLUME_GB:-500}" npx sst deploy --stage "$STAGE"
   )
 
   local instance_id
@@ -141,7 +111,7 @@ cmd_deploy() {
   echo "Stack deployed. Next:"
   echo "  swb bootstrap $STAGE"
   echo "  swb sync $STAGE --install"
-  echo "  swb env $STAGE"
+  echo "  swb env $STAGE          # pushes .env + docker login (eval images pull on demand)"
   echo "  swb run $STAGE yaml/{qwen,kimi}/smoke.yaml smoke-{qwen,kimi} --detach"
 }
 
@@ -249,6 +219,17 @@ cmd_env() {
   ssh_upload_file "$env_local" "$remote_env"
   ssh_cmd "test -f '$remote_env' && grep -qE '^(QWEN_API_KEY|OPENAI_API_KEY)=.' '$remote_env'"
   echo "Pushed .env to $remote_env (API key present)."
+
+  # Activate Docker Hub auth so eval-image pulls aren't rate-limited.
+  cmd_docker_login
+}
+
+# Authenticate the instance to Docker Hub using DOCKERHUB_* from the pushed
+# .env. Safe to re-run (token rotation); no-op if creds are absent.
+cmd_docker_login() {
+  require_aws
+  echo "Docker Hub login on instance (skipped if DOCKERHUB_* unset) ..."
+  ssh_cmd "bash '$REPO_PATH/cloud/remote/docker-login.sh'"
 }
 
 # -------------------------------------------------------------- benchmarks ---
@@ -422,83 +403,6 @@ TAR
   echo "Done: $local_dir"
 }
 
-# ---------------------------------------------------------- snapshot-data ---
-
-cmd_snapshot_data() {
-  require_aws
-  local instance_id volume_id
-  instance_id="$(get_instance_id)"
-  volume_id="$(get_data_volume_id)"
-
-  # Best-effort Slack from the laptop (notify.sh is a no-op without a webhook).
-  snap_notify() { SWB_STAGE="$STAGE" "$CLOUD_DIR/remote/notify.sh" "$@" >/dev/null 2>&1 || true; }
-
-  echo "Golden data snapshot for stage '$STAGE' ($(cloud_print_context))"
-  echo "  instance: $instance_id"
-  echo "  volume:   $volume_id"
-  echo
-  echo "This STOPS docker/containerd and freezes /data for a few seconds."
-  echo "Do not run while a benchmark is active."
-  read -r -p "Continue? [y/N] " ans
-  case "$ans" in [yY]|[yY][eE][sS]) ;; *) echo "Aborted."; exit 0 ;; esac
-
-  echo "Quiescing docker and freezing /data ..."
-  ssh_cmd "sudo systemctl stop docker docker.socket containerd && sync && sudo fsfreeze -f /data && echo '/data frozen'"
-
-  echo "Creating snapshot (point-in-time is the API call; /data unfreezes right after) ..."
-  local snap=""
-  if ! snap="$(aws ec2 create-snapshot \
-    --volume-id "$volume_id" \
-    --description "swe-bench golden data ($STAGE) $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --tag-specifications "ResourceType=snapshot,Tags=[{Key=Name,Value=swe-bench-golden-data},{Key=swe-bench-source-stage,Value=$STAGE}]" \
-    --query SnapshotId --output text)"; then
-    echo "error: create-snapshot failed; unfreezing /data" >&2
-    ssh_cmd "sudo fsfreeze -u /data; sudo systemctl start containerd docker" || true
-    exit 1
-  fi
-
-  echo "Unfreezing /data and restarting docker ..."
-  ssh_cmd "sudo fsfreeze -u /data && sudo systemctl start containerd docker && echo 'docker back up'"
-  snap_notify start "ebs-snapshot" "$snap" "creating golden snapshot from $volume_id"
-
-  # EBS snapshot copy to S3 can take hours for a cold full snapshot; poll up to
-  # 6h. Slack progress posts on each 10% milestone (not every tick).
-  echo "Snapshot $snap created; waiting for completion (background copy to S3, can take a while) ..."
-  local i state progress pct last_pct=-10
-  for i in $(seq 1 1440); do
-    read -r state progress < <(aws ec2 describe-snapshots --snapshot-ids "$snap" \
-      --query 'Snapshots[0].[State,Progress]' --output text 2>/dev/null) || true
-    if [[ "${state:-}" == "completed" ]]; then
-      break
-    fi
-    if [[ "${state:-}" == "error" ]]; then
-      echo "error: snapshot $snap failed" >&2
-      snap_notify failure "ebs-snapshot" "$snap" "FAILED · snapshot entered error state"
-      exit 1
-    fi
-    pct="${progress%\%}"; pct="${pct:-0}"
-    if [[ "$pct" =~ ^[0-9]+$ && $((pct - last_pct)) -ge 10 ]]; then
-      snap_notify progress "ebs-snapshot" "$snap" "${progress:-0%} copied"
-      last_pct="$pct"
-    fi
-    printf '\r  %s (%s) attempt %d/1440' "${state:-pending}" "${progress:-0%}" "$i"
-    sleep 15
-  done
-  echo
-
-  echo "$snap" > "$SNAPSHOT_ID_FILE"
-  echo
-  if [[ "${state:-}" == "completed" ]]; then
-    snap_notify success "ebs-snapshot" "$snap" "SUCCESS · golden snapshot ready (saved to cloud/.snapshot-id)"
-    echo "Golden snapshot: $snap (saved to cloud/.snapshot-id)"
-    echo "New stages will use it automatically:  swb deploy <new-stage>"
-  else
-    snap_notify progress "ebs-snapshot" "$snap" "still ${state:-pending} after 6h — copy continues in AWS; check with: aws ec2 describe-snapshots --snapshot-ids $snap"
-    echo "warning: snapshot still ${state:-pending} after 6h — copy continues in AWS." >&2
-    echo "  id saved to cloud/.snapshot-id; check later: aws ec2 describe-snapshots --snapshot-ids $snap" >&2
-  fi
-}
-
 # ------------------------------------------------------------- maintenance ---
 
 cmd_resize() {
@@ -614,11 +518,11 @@ case "$COMMAND" in
     shift
     cmd_results "$SUB" "$@"
     ;;
-  deploy|bootstrap|ready|sync|env|run|status|evaluate|summary|salvage|prepull|storage|snapshot-data|resize|ssh|connect|stop|start|destroy)
+  deploy|bootstrap|ready|sync|env|docker-login|run|status|evaluate|summary|salvage|prepull|storage|resize|ssh|connect|stop|start|destroy)
     cloud_parse_stage "${1:-}"
     shift
     case "$COMMAND" in
-      snapshot-data) cmd_snapshot_data "$@" ;;
+      docker-login) cmd_docker_login "$@" ;;
       *) "cmd_${COMMAND}" "$@" ;;
     esac
     ;;

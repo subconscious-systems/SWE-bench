@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Post one Slack message to an incoming webhook. Used both on the instance
-# (by run_job.sh) and locally (by swb snapshot-data).
+# Post one Slack message to an incoming webhook. Used on the instance by
+# run_job.sh (and runnable locally for testing).
 #
 # Usage: notify.sh <status> <job> <run_name> [message]
 #   status: start | progress | success | failure
 #
 # Silent no-op when SLACK_WEBHOOK_URL is unset, and never fails the caller —
-# a Slack outage must not break a benchmark or snapshot job.
+# a Slack outage must not break a benchmark job.
 set -uo pipefail
 
 STATUS="${1:-}"
