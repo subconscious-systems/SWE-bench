@@ -55,6 +55,7 @@ export PYTHONUNBUFFERED=1
   -c swebench.yaml \
   -c "$AGENT_CFG" \
   $SLICE_ARGS \
+  $FILTER_ARGS \
   $REDO_ARGS
 
 echo

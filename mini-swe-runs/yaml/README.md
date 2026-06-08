@@ -24,7 +24,7 @@ Re-run the **same** yaml + `RUN_NAME` to resume (`results/<RUN_NAME>/preds.json`
 |---------|---------------------------|---------|
 | `meta` | No | `model_name`, `model_label`, `agent_workers`, `eval_workers` |
 | `env` | No (exported to shell) | `${VAR}` expanded from `.env` + `MSR_ROOT` |
-| `benchmark` | No | `subset`, `split`, `smoke_slice`, `clean_start`, `redo_existing`, `run_eval` (default true) |
+| `benchmark` | No | `subset`, `split`, `smoke_slice`, `filter` (regex), `instance_ids_file` (path to JSON list of ids → `--filter`), `clean_start`, `redo_existing`, `run_eval` (default true) |
 | `agent`, `model`, `environment` | Yes | Standard mini-swe-agent YAML |
 
 ## `.env` variables

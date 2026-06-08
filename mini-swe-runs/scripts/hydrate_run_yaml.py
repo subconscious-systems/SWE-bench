@@ -107,6 +107,22 @@ def emit_bootstrap(loaded: dict[str, Any], run_name: str, msr_root: Path) -> Non
     slice_args = f"--slice {slice_val}" if slice_val else ""
     redo_args = "--redo-existing" if bench.get("redo_existing") else ""
 
+    # Instance selection by explicit ID list (--filter is re.match'd against instance_id).
+    # `filter` is a raw regex; `instance_ids_file` is a JSON list of ids compiled to one.
+    filter_spec = bench.get("filter") or ""
+    ids_file = bench.get("instance_ids_file")
+    if ids_file:
+        ids_path = Path(ids_file)
+        if not ids_path.is_absolute():
+            ids_path = msr_root / ids_path
+        ids = json.loads(ids_path.read_text())
+        if not isinstance(ids, list) or not ids:
+            raise ValueError(f"instance_ids_file must be a non-empty JSON list: {ids_path}")
+        # re.match anchors the start; add `$` so each id matches in full.
+        filter_spec = "(" + "|".join(re.escape(str(i)) for i in ids) + ")$"
+    # No spaces in instance ids/regex, so the outer shlex.quote + word-split is safe.
+    filter_args = f"--filter {filter_spec}" if filter_spec else ""
+
     print(_shell_export("MODEL_NAME", meta["model_name"]))
     print(_shell_export("MODEL_LABEL", meta.get("model_label", meta["model_name"])))
     print(_shell_export("AGENT_WORKERS", meta.get("agent_workers", 4)))
@@ -119,6 +135,7 @@ def emit_bootstrap(loaded: dict[str, Any], run_name: str, msr_root: Path) -> Non
     print(_shell_export("RUN_EVAL", "1" if bench.get("run_eval", True) else "0"))
     print(f"SLICE_ARGS={shlex.quote(slice_args)}")
     print(f"REDO_ARGS={shlex.quote(redo_args)}")
+    print(f"FILTER_ARGS={shlex.quote(filter_args)}")
 
 
 def main() -> int:

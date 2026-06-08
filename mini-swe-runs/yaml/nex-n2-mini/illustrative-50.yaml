@@ -1,0 +1,50 @@
+# 50-task illustrative subset of SWE-bench Verified (~1/10th the full run).
+# Stratified by repo + by the tim-qwen3.6-27b verified-full-v2 pass/fail mix,
+# so the subset resolve rate (~64%) tracks the full set (~66%). Same model_kwargs
+# as yaml/nex-n2-mini/verified-full.yaml. Sample: subsets/illustrative-50.json
+
+meta:
+  model_name: openai/subconscious/tim-nex-n2-mini
+  model_label: tim-nex-n2-mini
+  agent_workers: 4
+  eval_workers: 4
+
+env:
+  OPENAI_API_KEY: ${NEX_N2_API_KEY}
+  MSWEA_API_KEY: ${NEX_N2_API_KEY}
+  MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT: "5"
+  MSWEA_COST_TRACKING: ignore_errors
+  LITELLM_MODEL_REGISTRY_PATH: ${MSR_ROOT}/litellm_registry.json
+  PYTHONPATH: ${MSR_ROOT}
+
+benchmark:
+  subset: verified
+  split: test
+  instance_ids_file: subsets/illustrative-50.json
+  clean_start: false
+  redo_existing: false
+
+agent:
+  step_limit: 500
+  cost_limit: 0
+  wall_time_limit_seconds: 5400
+
+environment:
+  pull_timeout: 1800
+
+model:
+  model_class: turn_failure_model.TurnFailureModel
+  model_kwargs:
+    custom_llm_provider: openai
+    num_retries: 0
+    timeout: 450
+    max_tokens: 32768
+    temperature: 0.7
+    top_p: 0.95
+    top_k: 40
+    drop_params: true
+    parallel_tool_calls: true
+    chat_template_kwargs:
+      subtask_buffer_size: 5
+      min_subtask_length: 3
+    api_base: ${NEX_N2_BASE_URL}
