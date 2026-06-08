@@ -76,6 +76,21 @@ remote_msr() {
   ssh_cmd "cd $(printf '%q' "$MINI_SWE_RUNS_PATH") && ./scripts/${script}${q}"
 }
 
+# Echo a remote command that runs <command...> under run_job.sh with Slack
+# notifications (start / periodic progress / terminal). Run it with cwd =
+# mini-swe-runs on the instance. <progress> is a shell snippet (may be empty)
+# that echoes one progress line; it is passed verbatim and eval'd on the box.
+build_job_cmd() {
+  local job="$1" run="$2" progress="$3"; shift 3
+  local cmd
+  cmd="SWB_STAGE=$(printf '%q' "$STAGE") $(printf '%q' "${REPO_PATH}/cloud/remote/run_job.sh") $(printf '%q' "$job") $(printf '%q' "$run")"
+  [[ -n "$progress" ]] && cmd+=" --progress $(printf '%q' "$progress")"
+  cmd+=" --"
+  local a
+  for a in "$@"; do cmd+=" $(printf '%q' "$a")"; done
+  printf '%s' "$cmd"
+}
+
 # ----------------------------------------------------------------- deploy ---
 
 cmd_deploy() {
@@ -186,6 +201,7 @@ cmd_sync() {
   remote_cmd="set -euo pipefail
 GIT_WORK_TREE=$REPO_PATH git --git-dir=$REMOTE_GIT_DIR checkout -f $sha
 echo $sha > $REPO_PATH/.deployed-sha
+echo $(printf '%q' "$STAGE") > $REPO_PATH/.swb-stage
 echo \"deployed: $sha\""
   if [[ "$install" == 1 ]]; then
     remote_cmd+="
@@ -254,9 +270,11 @@ cmd_run() {
   cloud_parse_run_name "$run_name"
   require_aws
 
+  # Slack progress = completed-instance count from status.sh.
+  local progress="./scripts/status.sh $RUN_NAME 2>/dev/null | grep -m1 'completed total' || true"
   local run_cmd
-  run_cmd="./scripts/run.sh $(printf '%q' "$yaml_path") $(printf '%q' "$RUN_NAME")"
-  echo "Remote: cd $MINI_SWE_RUNS_PATH && $run_cmd"
+  run_cmd="$(build_job_cmd 'benchmark-run' "$RUN_NAME" "$progress" ./scripts/run.sh "$yaml_path" "$RUN_NAME")"
+  echo "Remote: cd $MINI_SWE_RUNS_PATH && (run_job.sh wraps) ./scripts/run.sh $yaml_path $RUN_NAME"
   echo "Log on instance: tail -f $MINI_SWE_RUNS_PATH/results/$RUN_NAME/minisweagent.log"
   echo
 
@@ -284,13 +302,12 @@ cmd_status() {
 
 cmd_evaluate() {
   require_aws
-  if [[ $# -eq 0 ]]; then
-    remote_msr evaluate.sh
-    return
-  fi
-  cloud_parse_run_name "$1"
-  shift
-  remote_msr evaluate.sh "$RUN_NAME" "$@"
+  cloud_parse_run_name "${1:-}"
+  [[ $# -gt 0 ]] && shift
+  local progress="echo \"\$(find results/$RUN_NAME/logs/run_evaluation -name report.json 2>/dev/null | wc -l | tr -d ' ') instances scored\""
+  local job_cmd
+  job_cmd="$(build_job_cmd 'evaluation' "$RUN_NAME" "$progress" ./scripts/evaluate.sh "$RUN_NAME" "$@")"
+  ssh_cmd "cd '$MINI_SWE_RUNS_PATH' && bash -lc $(printf '%q' "$job_cmd")"
 }
 
 cmd_summary() {
@@ -307,7 +324,10 @@ cmd_salvage() {
 
 cmd_prepull() {
   require_aws
-  remote_msr prepull.sh "$@"
+  local progress="echo \"\$(docker images -q | wc -l | tr -d ' ') images present\""
+  local job_cmd
+  job_cmd="$(build_job_cmd 'prepull' 'images' "$progress" ./scripts/prepull.sh "$@")"
+  ssh_cmd "cd '$MINI_SWE_RUNS_PATH' && bash -lc $(printf '%q' "$job_cmd")"
 }
 
 cmd_storage() {
@@ -410,6 +430,9 @@ cmd_snapshot_data() {
   instance_id="$(get_instance_id)"
   volume_id="$(get_data_volume_id)"
 
+  # Best-effort Slack from the laptop (notify.sh is a no-op without a webhook).
+  snap_notify() { SWB_STAGE="$STAGE" "$CLOUD_DIR/remote/notify.sh" "$@" >/dev/null 2>&1 || true; }
+
   echo "Golden data snapshot for stage '$STAGE' ($(cloud_print_context))"
   echo "  instance: $instance_id"
   echo "  volume:   $volume_id"
@@ -436,10 +459,13 @@ cmd_snapshot_data() {
 
   echo "Unfreezing /data and restarting docker ..."
   ssh_cmd "sudo fsfreeze -u /data && sudo systemctl start containerd docker && echo 'docker back up'"
+  snap_notify start "ebs-snapshot" "$snap" "creating golden snapshot from $volume_id"
 
+  # EBS snapshot copy to S3 can take hours for a cold full snapshot; poll up to
+  # 6h. Slack progress posts on each 10% milestone (not every tick).
   echo "Snapshot $snap created; waiting for completion (background copy to S3, can take a while) ..."
-  local i state progress
-  for i in $(seq 1 360); do
+  local i state progress pct last_pct=-10
+  for i in $(seq 1 1440); do
     read -r state progress < <(aws ec2 describe-snapshots --snapshot-ids "$snap" \
       --query 'Snapshots[0].[State,Progress]' --output text 2>/dev/null) || true
     if [[ "${state:-}" == "completed" ]]; then
@@ -447,21 +473,30 @@ cmd_snapshot_data() {
     fi
     if [[ "${state:-}" == "error" ]]; then
       echo "error: snapshot $snap failed" >&2
+      snap_notify failure "ebs-snapshot" "$snap" "FAILED · snapshot entered error state"
       exit 1
     fi
-    printf '\r  %s (%s) attempt %d/360' "${state:-pending}" "${progress:-0%}" "$i"
+    pct="${progress%\%}"; pct="${pct:-0}"
+    if [[ "$pct" =~ ^[0-9]+$ && $((pct - last_pct)) -ge 10 ]]; then
+      snap_notify progress "ebs-snapshot" "$snap" "${progress:-0%} copied"
+      last_pct="$pct"
+    fi
+    printf '\r  %s (%s) attempt %d/1440' "${state:-pending}" "${progress:-0%}" "$i"
     sleep 15
   done
   echo
-  if [[ "${state:-}" != "completed" ]]; then
-    echo "warning: snapshot still ${state:-pending} after 90m — check later with:" >&2
-    echo "  aws ec2 describe-snapshots --snapshot-ids $snap" >&2
-  fi
 
   echo "$snap" > "$SNAPSHOT_ID_FILE"
   echo
-  echo "Golden snapshot: $snap (saved to cloud/.snapshot-id)"
-  echo "New stages will use it automatically:  swb deploy <new-stage>"
+  if [[ "${state:-}" == "completed" ]]; then
+    snap_notify success "ebs-snapshot" "$snap" "SUCCESS · golden snapshot ready (saved to cloud/.snapshot-id)"
+    echo "Golden snapshot: $snap (saved to cloud/.snapshot-id)"
+    echo "New stages will use it automatically:  swb deploy <new-stage>"
+  else
+    snap_notify progress "ebs-snapshot" "$snap" "still ${state:-pending} after 6h — copy continues in AWS; check with: aws ec2 describe-snapshots --snapshot-ids $snap"
+    echo "warning: snapshot still ${state:-pending} after 6h — copy continues in AWS." >&2
+    echo "  id saved to cloud/.snapshot-id; check later: aws ec2 describe-snapshots --snapshot-ids $snap" >&2
+  fi
 }
 
 # ------------------------------------------------------------- maintenance ---

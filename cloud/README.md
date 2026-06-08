@@ -206,6 +206,18 @@ R2_PREFIX=swe-bench-runs
 
 R2 object key (stable, per run name): `{R2_PREFIX}/{RUN_NAME}/swe-bench-{RUN_NAME}.zip`. R2 credentials are scoped per-invocation (`lib/r2.sh`) — they are never exported into the shell, so they can't poison real-AWS calls.
 
+## Slack notifications (optional, Jenkins-style)
+
+The long-running jobs — `prepull`, `snapshot-data`, `run`, `evaluate` — post to Slack: a start (▶️), periodic progress (⏳, default every 30 min), and a terminal success (✅) / failure (❌). Each message is tagged with the **stage** (cloud env), **job**, and **run name**; failures `@here` the channel. Absent config = silently disabled.
+
+Setup:
+
+1. Create a Slack app → enable **Incoming Webhooks** → **Add New Webhook to Workspace** → pick a channel → copy the URL.
+2. Add it to `mini-swe-runs/.env` (gitignored): `SLACK_WEBHOOK_URL=https://hooks.slack.com/services/…` (optional `SLACK_NOTIFY_INTERVAL_SECS=1800`).
+3. `swb env <stage>` to push `.env` to the instance.
+
+How it works: jobs **self-report** from where they run. Instance jobs (`run`/`evaluate`/`prepull`) are wrapped by `cloud/remote/run_job.sh`, which reads `SLACK_WEBHOOK_URL` from the synced `.env` and posts via `cloud/remote/notify.sh` — so notifications keep flowing even when your laptop is closed and the job is detached in tmux. `snapshot-data` posts from the laptop. The webhook URL is a credential; it lives only in `.env` and is rotatable by recreating the webhook in the Slack app.
+
 ## Persistence
 
 | Action | Data on `/data`? |
