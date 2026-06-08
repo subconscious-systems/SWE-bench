@@ -42,7 +42,6 @@ if [[ "$CLEAN_START" == "1" ]]; then
   rm -f "$OUTPUT_DIR/preds.json"
   rm -rf "$OUTPUT_DIR/logs/run_evaluation"
 fi
-rm -f "$OUTPUT_DIR/eval_slack_summary.txt"
 
 # Unbuffered Python so INFO lines appear in the terminal promptly.
 export PYTHONUNBUFFERED=1

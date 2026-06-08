@@ -251,8 +251,8 @@ cmd_run() {
   cloud_parse_run_name "$run_name"
   require_aws
 
-  # Slack progress: agent status while running; eval score line after RUN_EVAL=1.
-  local progress='if [[ -f results/'"$RUN_NAME"'/eval_slack_summary.txt ]]; then ./scripts/eval_notify_line.sh '"$RUN_NAME"'; else ./scripts/status.sh '"$RUN_NAME"' 2>/dev/null | grep -m1 "completed total" || true; fi'
+  # Slack progress = completed-instance count from status.sh.
+  local progress="./scripts/status.sh $RUN_NAME 2>/dev/null | grep -m1 'completed total' || true"
   local run_cmd
   run_cmd="$(build_job_cmd 'benchmark-run' "$RUN_NAME" "$progress" ./scripts/run.sh "$yaml_path" "$RUN_NAME")"
   echo "Remote: cd $MINI_SWE_RUNS_PATH && (run_job.sh wraps) ./scripts/run.sh $yaml_path $RUN_NAME"
@@ -285,7 +285,7 @@ cmd_evaluate() {
   require_aws
   cloud_parse_run_name "${1:-}"
   [[ $# -gt 0 ]] && shift
-  local progress="./scripts/eval_notify_line.sh $RUN_NAME"
+  local progress="echo \"\$(find results/$RUN_NAME/logs/run_evaluation -name report.json 2>/dev/null | wc -l | tr -d ' ') instances scored\""
   local job_cmd
   job_cmd="$(build_job_cmd 'evaluation' "$RUN_NAME" "$progress" ./scripts/evaluate.sh "$RUN_NAME" "$@")"
   ssh_cmd "cd '$MINI_SWE_RUNS_PATH' && bash -lc $(printf '%q' "$job_cmd")"
