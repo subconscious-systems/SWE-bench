@@ -53,17 +53,29 @@ echo "run_job: live log -> $LOG  (tail -f, or attach the tmux session)"
 
 notify start "$JOB" "$RUN_NAME" "started"
 
-# Run the job, streaming output to BOTH the log and our stdout (so the tmux
-# pane / foreground show it live) while a progress loop watches the PID.
-"$@" > >(tee "$LOG") 2>&1 &
-job_pid=$!
+# Run inside `script` so the job gets a PTY (Rich live progress works). Plain
+# tee/pipe would make stdout non-TTY and mini-swe-agent falls back to sparse logs.
+# script copies the session to $LOG and still streams to our stdout (tmux pane).
+run_job_script() {
+  if script --version >/dev/null 2>&1; then
+    script -q -f "$LOG" -- "$@"
+  else
+    script -q "$LOG" "$@"
+  fi
+}
 
 prog_pid=""
+stop_progress() {
+  [[ -n "$prog_pid" ]] || return 0
+  kill "$prog_pid" 2>/dev/null || true
+  wait "$prog_pid" 2>/dev/null || true
+  prog_pid=""
+}
+trap stop_progress EXIT
+
 if [[ -n "$PROGRESS_CMD" && "$INTERVAL" -gt 0 ]]; then
   (
-    while kill -0 "$job_pid" 2>/dev/null; do
-      sleep "$INTERVAL" || break
-      kill -0 "$job_pid" 2>/dev/null || break
+    while sleep "$INTERVAL"; do
       line="$(eval "$PROGRESS_CMD" 2>/dev/null | tail -1)"
       [[ -n "$line" ]] && notify progress "$JOB" "$RUN_NAME" "$line"
     done
@@ -71,10 +83,11 @@ if [[ -n "$PROGRESS_CMD" && "$INTERVAL" -gt 0 ]]; then
   prog_pid=$!
 fi
 
-wait "$job_pid"
-rc=$?
-
-[[ -n "$prog_pid" ]] && { kill "$prog_pid" 2>/dev/null || true; wait "$prog_pid" 2>/dev/null || true; }
+# Foreground (not background): Ctrl+C reaches script's PTY and the job inside it.
+rc=0
+run_job_script "$@" || rc=$?
+stop_progress
+trap - EXIT
 
 dur="$(fmt_dur $(( $(date +%s) - START_EPOCH )))"
 
@@ -87,5 +100,4 @@ else
   notify failure "$JOB" "$RUN_NAME" "FAILED · exit ${rc} · ${dur}"$'\n'"\`\`\`${tail_lines}\`\`\`"
 fi
 
-# Output already streamed via tee above; just preserve the job's exit code.
 exit "$rc"
