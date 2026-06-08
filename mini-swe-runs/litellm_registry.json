@@ -35,6 +35,24 @@
     "cache_read_input_token_cost": 1.5e-7,
     "output_cost_per_token": 3e-6
   },
+  "openai/subconscious/tim-nex-n2-mini": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
+  },
+  "subconscious/tim-nex-n2-mini": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
+  },
+  "tim-nex-n2-mini": {
+    "litellm_provider": "openai",
+    "input_cost_per_token": 3e-7,
+    "cache_read_input_token_cost": 1.5e-7,
+    "output_cost_per_token": 3e-6
+  },
   "openai/subconscious/tim-qwen3.5-35b-a3b": {
     "litellm_provider": "openai",
     "input_cost_per_token": 3e-7,
@@ -53,8 +71,8 @@
     "cache_read_input_token_cost": 1.5e-7,
     "output_cost_per_token": 3e-6
   },
-  "openrouter/qwen/qwen3.6-27b": {
-    "litellm_provider": "openrouter",
+  "openai/qwen/qwen3.6-27b": {
+    "litellm_provider": "openai",
     "input_cost_per_token": 2.89e-7,
     "output_cost_per_token": 2.4e-6
   }

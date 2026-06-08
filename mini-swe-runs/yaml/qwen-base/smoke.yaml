@@ -1,11 +1,12 @@
 # Base Qwen3.6-27B via OpenRouter — off-the-shelf LitellmModel (no TurnFailureModel).
 # https://openrouter.ai/qwen/qwen3.6-27b
-# litellm routes `openrouter/...` to OpenRouter (reads OPENROUTER_API_KEY) and respects
-# model_kwargs.timeout. Pricing comes from litellm_registry.json (litellm has no built-in
-# entry for this model).
+# Routed as the openai provider against OpenRouter's openai-compatible endpoint
+# (model_kwargs.api_base + api_key). This avoids litellm's openrouter-routing path
+# that prints the "Provider List" banner on every call. Pricing comes from
+# litellm_registry.json (key openai/qwen/qwen3.6-27b, litellm_provider openai).
 
 meta:
-  model_name: openrouter/qwen/qwen3.6-27b
+  model_name: openai/qwen/qwen3.6-27b
   model_label: qwen/qwen3.6-27b-base
   agent_workers: 2
   eval_workers: 2
@@ -33,6 +34,8 @@ model:
   # (OpenRouter occasionally returns usage litellm can't price) from crashing the run.
   cost_tracking: ignore_errors
   model_kwargs:
+    api_base: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
     timeout: 120
     max_tokens: 16384
     temperature: 1.0
