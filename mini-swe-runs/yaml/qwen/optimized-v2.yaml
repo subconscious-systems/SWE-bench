@@ -1,9 +1,12 @@
-# NOTE: original full run we did - results stored locally
+# 50-task illustrative subset of SWE-bench Verified (~1/10th the full run).
+# Stratified by repo + by the tim-qwen3.6-27b verified-full-v2 pass/fail mix,
+# so the subset resolve rate (~64%) tracks the full set (~66%). Same model_kwargs
+# as yaml/qwen/verified-full-v2.yaml. Sample: subsets/illustrative-50.json
 
 meta:
   model_name: openai/subconscious/tim-qwen3.6-27b
   model_label: subconscious/tim-qwen3.6-27b
-  agent_workers: 4
+  agent_workers: 6
   eval_workers: 4
 
 env:
@@ -21,7 +24,7 @@ benchmark:
   redo_existing: false
 
 agent:
-  step_limit: 750
+  step_limit: 500
   cost_limit: 0
   wall_time_limit_seconds: 5400
 
@@ -33,13 +36,13 @@ model:
   model_kwargs:
     custom_llm_provider: openai
     num_retries: 0
-    timeout: 600
+    timeout: 450
     max_tokens: 32768
-    temperature: 1.0
+    temperature: 0.7
     top_p: 0.95
     drop_params: true
     parallel_tool_calls: true
     chat_template_kwargs:
-      subtask_buffer_size: 2
-      min_subtask_length: 2
+      subtask_buffer_size: 5
+      min_subtask_length: 3
     api_base: ${QWEN_BASE_URL}
