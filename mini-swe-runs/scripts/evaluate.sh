@@ -17,8 +17,11 @@ ulimit -n 65536 2>/dev/null || echo "warn: could not raise fd limit (ulimit -n =
 
 WORKERS="${WORKERS:-4}"
 PREDS_JSON="$RESULTS_DIR/preds.json"
+SLACK_SUMMARY="$RESULTS_DIR/eval_slack_summary.txt"
 
 [[ -f "$PREDS_JSON" ]] || { echo "error: no preds.json at $PREDS_JSON" >&2; exit 1; }
+
+rm -f "$SLACK_SUMMARY"
 
 # Harness writes the summary JSON and logs/run_evaluation/ relative to process cwd
 # (swebench --report_dir only mkdirs; it does not relocate the summary file).
@@ -36,16 +39,16 @@ PREDS_JSON="$RESULTS_DIR/preds.json"
 REPORT="$(ls -t "$RESULTS_DIR"/*."$RUN_ID".json 2>/dev/null | head -1)"
 [[ -n "$REPORT" ]] || { echo "error: report json not found in $RESULTS_DIR" >&2; exit 1; }
 
-uv run --directory "$MSR_ROOT" python - "$REPORT" <<'EOF'
-import json, sys
+uv run --directory "$MSR_ROOT" python - "$REPORT" "$SLACK_SUMMARY" <<'EOF'
+import json, os, sys
 
-path = sys.argv[1]
+path, slack_path = sys.argv[1], sys.argv[2]
 r = json.load(open(path))
 total = r["total_instances"]
 sub = r["submitted_instances"]
 res = r["resolved_instances"]
 
-label = __import__("os").environ.get("MODEL_LABEL", "subconscious/tim-qwen3.6-27b")
+label = os.environ.get("MODEL_LABEL", "subconscious/tim-qwen3.6-27b")
 print()
 print(f"## SWE-bench Verified — {label}")
 print()
@@ -61,4 +64,17 @@ print(f"| Empty patch | {r['empty_patch_instances']} |")
 print(f"| Eval errors | {r['error_instances']} |")
 print()
 print(f"Full per-instance breakdown (resolved_ids / unresolved_ids / ...): {path}")
+
+line = f"{res}/{total} resolved ({100 * res / total:.1f}%)"
+if sub != total:
+    line += f" · {res}/{sub} of submitted ({100 * res / sub:.1f}%)"
+extras = []
+if r["error_instances"]:
+    extras.append(f"{r['error_instances']} eval errors")
+if r["empty_patch_instances"]:
+    extras.append(f"{r['empty_patch_instances']} empty patch")
+if extras:
+    line += " · " + " · ".join(extras)
+with open(slack_path, "w") as f:
+    f.write(line + "\n")
 EOF
