@@ -44,15 +44,18 @@ fmt_dur() {
 }
 
 START_EPOCH="$(date +%s)"
-LOG="$(mktemp -t swb-job.XXXXXX)"
-# shellcheck disable=SC2329  # invoked via the EXIT trap below
-cleanup() { rm -f "$LOG"; }
-trap cleanup EXIT
+# Stable, tailable log (not a throwaway temp file). Prefer the run's results
+# dir so the log travels with results; fall back to a predictable /tmp path.
+LOG="${TMPDIR:-/tmp}/swb-job-${RUN_NAME}.log"
+[[ -d "results/$RUN_NAME" ]] && LOG="results/$RUN_NAME/run_job.log"
+: > "$LOG"
+echo "run_job: live log -> $LOG  (tail -f, or attach the tmux session)"
 
 notify start "$JOB" "$RUN_NAME" "started"
 
-# Run the job in the background so a progress loop can watch it.
-( "$@" ) >"$LOG" 2>&1 &
+# Run the job, streaming output to BOTH the log and our stdout (so the tmux
+# pane / foreground show it live) while a progress loop watches the PID.
+"$@" > >(tee "$LOG") 2>&1 &
 job_pid=$!
 
 prog_pid=""
@@ -79,10 +82,10 @@ if [[ "$rc" -eq 0 ]]; then
   final="$(eval "$PROGRESS_CMD" 2>/dev/null | tail -1)"
   notify success "$JOB" "$RUN_NAME" "SUCCESS · ${final:-done} · ${dur}"
 else
-  tail_lines="$(tail -n 15 "$LOG" 2>/dev/null)"
+  # Strip CRs so a Rich/live console's last frame is readable in Slack.
+  tail_lines="$(tr '\r' '\n' < "$LOG" 2>/dev/null | tail -n 15)"
   notify failure "$JOB" "$RUN_NAME" "FAILED · exit ${rc} · ${dur}"$'\n'"\`\`\`${tail_lines}\`\`\`"
 fi
 
-# Surface the job's output and preserve its exit code for the caller.
-cat "$LOG"
+# Output already streamed via tee above; just preserve the job's exit code.
 exit "$rc"
